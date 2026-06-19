@@ -1,0 +1,48 @@
+# MC Transport Dialer — Server Config (MVP defaults)
+#
+# This config drives the server-side Fabric mod. It only controls the fixed
+# TCP target the server dials after a successful OPEN frame; it does not
+# configure any proxy protocol or upstream selection.
+
+enabled = true
+
+# Fixed TCP target the server dials for every successful OPEN. The server
+# mod refuses any client-provided target information. The target must be
+# reachable from the server host (loopback or an internal address).
+target_host = "127.0.0.1"
+target_port = 10000
+
+# Fabric networking channel used to carry encrypted internal frames between
+# the client and server mods. Both sides MUST match.
+channel_name = "mctransport:main"
+
+# Pre-shared secret used by the PSK AEAD cipher. Replace "change-me" with a
+# long random string shared with the client mod. This value is read once at
+# startup and must never be logged.
+psk = "change-me"
+
+# Players allowed to authenticate with this server. Each entry is a player
+# UUID (with or without dashes). Non-whitelisted players are rejected before
+# any stream is opened.
+allowed_players = ["player-uuid-here"]
+
+# Per-player stream concurrency cap. OPEN frames beyond this limit are
+# answered with ERROR.
+max_streams_per_player = 64
+
+# Maximum bytes buffered for a single stream before backpressure pauses the
+# target socket read.
+stream_buffer_size = 1048576
+
+# Maximum bytes buffered across all streams for a single player session
+# before further DATA frames are paused.
+global_buffer_size_per_player = 33554432
+
+# Idle seconds before a session is closed and all of its streams are torn
+# down. Independent of Minecraft keepalive.
+idle_timeout_seconds = 300
+
+# Connect timeout when dialing the fixed target_host:target_port.
+connect_timeout_seconds = 10
+
+log_level = "info"

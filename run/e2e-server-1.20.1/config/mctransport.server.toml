@@ -1,0 +1,12 @@
+enabled = true
+target_host = "127.0.0.1"
+target_port = 10000
+channel_name = "mctransport:main"
+psk = "mc-transport-e2e-psk"
+allowed_players = ["00000000-0000-0000-0000-000000000001"]
+max_streams_per_player = 64
+stream_buffer_size = 1048576
+global_buffer_size_per_player = 33554432
+idle_timeout_seconds = 300
+connect_timeout_seconds = 10
+log_level = "info"

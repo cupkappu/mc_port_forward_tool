@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "mctransport",
+  "version": "${version}",
+  "name": "MC Transport Dialer",
+  "description": "Minecraft transport layer that relays local TCP byte streams through a real Minecraft client-server connection to a fixed server-side target.",
+  "authors": [
+    "kifuko"
+  ],
+  "contact": {
+    "homepage": "https://github.com/kifuko/mc-transport-dialer"
+  },
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "client": [
+      "dev.kifuko.mctransport.client.McTransportClient"
+    ],
+    "server": [
+      "dev.kifuko.mctransport.server.McTransportServer"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "${minecraft_dependency_range}",
+    "java": ">=${java_language_level}",
+    "fabric-api": "${fabric_api_dependency_range}"
+  }
+}

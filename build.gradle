@@ -1,0 +1,128 @@
+plugins {
+	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
+	id 'maven-publish'
+}
+
+def targetMinecraft = (findProperty("targetMinecraft") ?: "1.21.1").toString()
+def versionFile = file("versions/${targetMinecraft}.properties")
+if (!versionFile.isFile()) {
+	throw new GradleException("Unsupported targetMinecraft=${targetMinecraft}; expected a file at ${versionFile}")
+}
+
+def targetProps = new Properties()
+versionFile.withInputStream { targetProps.load(it) }
+targetProps.each { key, value ->
+	extensions.extraProperties.set(key.toString(), value.toString())
+}
+
+version = "${targetMinecraft}-${project.mod_version}"
+group = project.maven_group
+
+repositories {
+	maven {
+		name = 'Fabric'
+		url = uri('https://maven.fabricmc.net/')
+	}
+	mavenCentral()
+}
+
+loom {
+	splitEnvironmentSourceSets()
+
+	mods {
+		"mctransport" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// JUnit 5 for unit tests (Task 1+).
+	testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+sourceSets {
+	main {
+		java.srcDir "src/${project.adapter_source_set}/main/java"
+		resources.srcDir "src/${project.adapter_source_set}/main/resources"
+	}
+	client {
+		java.srcDir "src/${project.adapter_source_set}/client/java"
+		resources.srcDir "src/${project.adapter_source_set}/client/resources"
+	}
+}
+
+afterEvaluate {
+    if (sourceSets.findByName('client') != null) {
+        sourceSets.client.compileClasspath += sourceSets.main.output
+    }
+    sourceSets.test.compileClasspath += sourceSets.main.output
+    if (sourceSets.findByName('client') != null) {
+        sourceSets.test.compileClasspath += sourceSets.client.output
+    }
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+	inputs.property "minecraft_dependency_range", project.minecraft_dependency_range
+	inputs.property "java_language_level", project.java_language_level
+	inputs.property "fabric_api_dependency_range", project.fabric_api_dependency_range
+	filesMatching("fabric.mod.json") {
+		expand(
+			"version": version,
+			"minecraft_dependency_range": project.minecraft_dependency_range,
+			"java_language_level": project.java_language_level,
+			"fabric_api_dependency_range": project.fabric_api_dependency_range,
+			"loader_version": project.loader_version
+		)
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = project.java_language_level as int
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.toVersion(project.java_language_level as int)
+	targetCompatibility = JavaVersion.toVersion(project.java_language_level as int)
+}
+
+base {
+	archivesName = "mc-transport-dialer"
+}
+
+jar {
+	from("LICENSE") {
+		rename { "${it}_${project.name}" }
+	}
+}
+
+// Loom merges client + main sources into one jar but produces duplicate
+// entries for sourcesJar. Set duplicatesStrategy to exclude duplicates.
+sourcesJar {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+test {
+	useJUnitPlatform()
+}
+
+publishing {
+	publications {
+		create("mavenJava", MavenPublication) {
+			from components.java
+		}
+	}
+	repositories {
+		// Add repositories to publish to here.
+	}
+}
