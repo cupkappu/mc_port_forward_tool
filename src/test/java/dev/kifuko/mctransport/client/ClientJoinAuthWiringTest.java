@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientJoinAuthWiringTest {
 
@@ -22,6 +25,62 @@ class ClientJoinAuthWiringTest {
         YarnClient client = new YarnClient(uuid);
 
         assertEquals(uuid, McTransportClient.extractClientPlayerUuid(client));
+    }
+
+    @Test
+    void e2eQuickJoinTargetIgnoresBlankProperty() {
+        String old = System.getProperty("mctransport.e2e.quickJoin");
+        try {
+            System.setProperty("mctransport.e2e.quickJoin", "  ");
+
+            assertNull(McTransportClient.e2eQuickJoinTarget());
+        } finally {
+            restoreQuickJoinProperty(old);
+        }
+    }
+
+    @Test
+    void e2eQuickJoinTargetTrimsConfiguredAddress() {
+        String old = System.getProperty("mctransport.e2e.quickJoin");
+        try {
+            System.setProperty("mctransport.e2e.quickJoin", " 127.0.0.1:25565 ");
+
+            assertEquals("127.0.0.1:25565", McTransportClient.e2eQuickJoinTarget());
+        } finally {
+            restoreQuickJoinProperty(old);
+        }
+    }
+
+    @Test
+    void e2eQuickJoinReadinessRequiresStableClientWithoutOverlay() {
+        int readyTicks = 0;
+
+        readyTicks = McTransportClient.nextE2eQuickJoinReadyTicks(
+                readyTicks, false, true);
+        assertEquals(0, readyTicks);
+
+        readyTicks = McTransportClient.nextE2eQuickJoinReadyTicks(
+                readyTicks, true, true);
+        assertEquals(1, readyTicks);
+        assertFalse(McTransportClient.shouldAttemptE2eQuickJoin(readyTicks));
+
+        for (int i = 1; i < McTransportClient.E2E_QUICK_JOIN_READY_TICKS; i++) {
+            readyTicks = McTransportClient.nextE2eQuickJoinReadyTicks(
+                    readyTicks, true, true);
+        }
+        assertTrue(McTransportClient.shouldAttemptE2eQuickJoin(readyTicks));
+
+        readyTicks = McTransportClient.nextE2eQuickJoinReadyTicks(
+                readyTicks, true, false);
+        assertEquals(0, readyTicks);
+    }
+
+    private static void restoreQuickJoinProperty(String old) {
+        if (old == null) {
+            System.clearProperty("mctransport.e2e.quickJoin");
+        } else {
+            System.setProperty("mctransport.e2e.quickJoin", old);
+        }
     }
 
     public static final class FakeClient {

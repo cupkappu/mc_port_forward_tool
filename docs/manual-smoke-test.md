@@ -34,6 +34,17 @@ scripts/e2e/prepare_fabric_server.sh 1.20.1 run/e2e-server-1.20.1 <player-uuid> 
 scripts/e2e/prepare_fabric_server.sh 1.21.1 run/e2e-server-1.21.1 <player-uuid> <shared-psk>
 ```
 
+For a guided real E2E run, use:
+
+```
+scripts/e2e/run_real_e2e.sh 1.20.1 <player-uuid> <shared-psk>
+scripts/e2e/run_real_e2e.sh 1.21.1 <player-uuid> <shared-psk>
+```
+
+The script starts the server and echo target, waits for the real client local
+listener on `127.0.0.1:25580`, runs single and concurrent probes, and appends
+the evidence to `docs/e2e-results/<version>.md`.
+
 Start the echo target:
 
 ```

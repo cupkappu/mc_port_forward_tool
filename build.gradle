@@ -116,6 +116,13 @@ test {
 	useJUnitPlatform()
 }
 
+tasks.matching { it.name == "runClient" }.configureEach {
+	def quickJoin = findProperty("mctransportE2eQuickJoin")
+	if (quickJoin != null && quickJoin.toString().trim()) {
+		jvmArgs "-Dmctransport.e2e.quickJoin=${quickJoin.toString().trim()}"
+	}
+}
+
 publishing {
 	publications {
 		create("mavenJava", MavenPublication) {

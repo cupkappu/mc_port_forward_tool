@@ -3,6 +3,7 @@ package dev.kifuko.mctransport.server;
 import dev.kifuko.mctransport.McTransport;
 import dev.kifuko.mctransport.config.ServerConfig;
 import dev.kifuko.mctransport.crypto.PskCipher;
+import dev.kifuko.mctransport.net.SerialExecutor;
 import dev.kifuko.mctransport.net.TunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameCodec;
@@ -29,6 +30,7 @@ public class FabricServerTunnelBridge implements TunnelBridge {
     private final SecureFrameCodec secureCodec;
     private final TunnelExecutorsAdapter executors;
     private final Map<java.util.UUID, PlayerTunnelSession> sessionsByPlayer = new ConcurrentHashMap<>();
+    private final Map<java.util.UUID, SerialExecutor> dispatchersByPlayer = new ConcurrentHashMap<>();
     private final Map<PlayerTunnelSession, Object> sessionToPlayer = new ConcurrentHashMap<>();
     private boolean started;
     private boolean closed;
@@ -53,24 +55,22 @@ public class FabricServerTunnelBridge implements TunnelBridge {
                     if (closed) return;
                     byte[] bytes = readAll(buf);
                     dispatchToPlayerUuid(player.getUuid(), bytes);
-                });
+        });
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            Object player = handler.getPlayer();
-            java.util.UUID playerUuid = extractUuid(player);
-            if (playerUuid == null) {
-                McTransport.LOGGER.warn("could not extract player UUID; skipping JOIN");
-                return;
-            }
+            ServerPlayerEntity player = handler.getPlayer();
+            java.util.UUID playerUuid = player.getUuid();
             PlayerTunnelSession session = createSession(player);
+            dispatchersByPlayer.put(playerUuid, new SerialExecutor(executors.io()));
             sessionsByPlayer.put(playerUuid, session);
             sessionToPlayer.put(session, player);
             McTransport.LOGGER.info("player {} joined; tunnel session ready", playerUuid);
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-            Object player = handler.getPlayer();
-            java.util.UUID playerUuid = extractUuid(player);
+            ServerPlayerEntity player = handler.getPlayer();
+            java.util.UUID playerUuid = player.getUuid();
             PlayerTunnelSession session = sessionsByPlayer.remove(playerUuid);
+            dispatchersByPlayer.remove(playerUuid);
             if (session != null) {
                 session.close();
                 sessionToPlayer.remove(session);
@@ -81,25 +81,6 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         started = true;
     }
 
-    /** Extracts a player's UUID across Yarn and Mojang-style method names. */
-    private static java.util.UUID extractUuid(Object player) {
-        if (player == null) {
-            return null;
-        }
-        for (String methodName : new String[]{"getUuid", "getUUID"}) {
-            try {
-                java.lang.reflect.Method m = player.getClass().getMethod(methodName);
-                Object ret = m.invoke(player);
-                if (ret instanceof java.util.UUID id) {
-                    return id;
-                }
-            } catch (ReflectiveOperationException ignored) {
-                // Try the next known mapping.
-            }
-        }
-        return null;
-    }
-
     private static byte[] readAll(PacketByteBuf buf) {
         byte[] bytes = new byte[buf.readableBytes()];
         buf.readBytes(bytes);
@@ -107,7 +88,12 @@ public class FabricServerTunnelBridge implements TunnelBridge {
     }
 
     private void dispatchToPlayerUuid(java.util.UUID playerUuid, byte[] bytes) {
-        executors.io().execute(() -> {
+        SerialExecutor dispatcher = dispatchersByPlayer.get(playerUuid);
+        if (dispatcher == null) {
+            McTransport.LOGGER.warn("inbound frame for unknown player {}", playerUuid);
+            return;
+        }
+        dispatcher.execute(() -> {
             PlayerTunnelSession session = sessionsByPlayer.get(playerUuid);
             if (session == null) {
                 McTransport.LOGGER.warn("inbound frame for unknown player {}", playerUuid);
@@ -161,6 +147,7 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         }
         sessionToPlayer.clear();
         sessionsByPlayer.clear();
+        dispatchersByPlayer.clear();
     }
 
     public interface TunnelExecutorsAdapter {
@@ -175,7 +162,7 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         }
 
         @Override
-        public void send(Frame frame) {
+        public synchronized void send(Frame frame) {
             if (closed) {
                 throw new IllegalStateException("bridge is closed");
             }

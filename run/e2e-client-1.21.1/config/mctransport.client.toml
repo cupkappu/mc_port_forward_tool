@@ -1,9 +1,0 @@
-enabled = true
-listen_host = "127.0.0.1"
-listen_port = 25580
-channel_name = "mctransport:main"
-psk = "mc-transport-e2e-psk"
-max_streams = 64
-stream_buffer_size = 1048576
-global_buffer_size = 33554432
-log_level = "info"

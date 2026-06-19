@@ -19,8 +19,11 @@ bash -n \
   scripts/test_matrix.sh \
   scripts/e2e/write_configs.sh \
   scripts/e2e/prepare_fabric_server.sh \
-  scripts/e2e/prepare_fabric_server_test.sh
-python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(), filename=p) for p in ["scripts/e2e/echo_server.py", "scripts/e2e/tcp_probe.py"]]'
+  scripts/e2e/prepare_fabric_server_test.sh \
+  scripts/e2e/run_real_e2e.sh \
+  scripts/e2e/run_dev_client_e2e.sh
+python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(), filename=p) for p in ["scripts/e2e/echo_server.py", "scripts/e2e/tcp_probe.py", "scripts/e2e/offline_uuid.py", "scripts/e2e/offline_uuid_test.py"]]'
+python3 scripts/e2e/offline_uuid_test.py
 
 echo "==> prepare_fabric_server path handling"
 scripts/e2e/prepare_fabric_server_test.sh

@@ -9,13 +9,21 @@ import dev.kifuko.mctransport.protocol.FrameCodec;
 import dev.kifuko.mctransport.protocol.SecureFrameCodec;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.minecraft.client.gui.screen.TitleScreen;
+import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
+import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
+import net.minecraft.client.network.ServerAddress;
+import net.minecraft.client.network.ServerInfo;
 import net.minecraft.util.Identifier;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -26,9 +34,12 @@ public final class McTransportClient implements ClientModInitializer {
 
     private static final String CONFIG_FILE = "mctransport.client.toml";
     private static final String CONFIG_RESOURCE = "/mctransport.client.toml";
+    static final int E2E_QUICK_JOIN_READY_TICKS = 40;
 
     private final AtomicReference<LocalTcpListener> listener = new AtomicReference<>();
     private final AtomicReference<ClientTunnelSession> session = new AtomicReference<>();
+    private final AtomicBoolean e2eQuickJoinStarted = new AtomicBoolean(false);
+    private final AtomicInteger e2eQuickJoinReadyTicks = new AtomicInteger(0);
     private TransportExecutors executors;
     private FabricClientTunnelBridge bridge;
 
@@ -51,6 +62,8 @@ public final class McTransportClient implements ClientModInitializer {
             String[] parts = config.getChannelName().split(":");
             Identifier channelId = Identifier.of(parts[0], parts[1]);
             TransportPayload.ID = TransportPayload.buildId(channelId);
+            PayloadTypeRegistry.playC2S().register(TransportPayload.ID,
+                    TransportPayload.CODEC);
             PayloadTypeRegistry.playS2C().register(TransportPayload.ID,
                     TransportPayload.CODEC);
 
@@ -96,11 +109,11 @@ public final class McTransportClient implements ClientModInitializer {
                     config.getListenHost(), config.getListenPort());
 
             ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-                UUID playerUuid = extractClientPlayerUuid(client);
-                if (playerUuid == null) {
+                if (client.player == null) {
                     McTransport.LOGGER.warn("client joined but player UUID was unavailable; AUTH not sent");
                     return;
                 }
+                UUID playerUuid = client.player.getUuid();
                 ClientTunnelSession s = session.get();
                 if (s != null) {
                     McTransport.LOGGER.info("client joined; sending AUTH for {}", playerUuid);
@@ -124,9 +137,55 @@ public final class McTransportClient implements ClientModInitializer {
                     executors.shutdown();
                 }
             });
+            registerE2eQuickJoinIfRequested();
         } catch (RuntimeException e) {
             McTransport.LOGGER.error("client init failed", e);
         }
+    }
+
+    private void registerE2eQuickJoinIfRequested() {
+        String target = e2eQuickJoinTarget();
+        if (target == null) {
+            return;
+        }
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            boolean overlayClear = client.getOverlay() == null;
+            boolean disconnected = client.world == null && client.player == null;
+            int readyTicks = e2eQuickJoinReadyTicks.updateAndGet(current ->
+                    nextE2eQuickJoinReadyTicks(current, overlayClear,
+                            disconnected));
+            if (!shouldAttemptE2eQuickJoin(readyTicks)) {
+                return;
+            }
+            if (!e2eQuickJoinStarted.compareAndSet(false, true)) {
+                return;
+            }
+            McTransport.LOGGER.info("E2E quick join connecting to {}", target);
+            ServerInfo info = new ServerInfo("MC Transport E2E", target,
+                    ServerInfo.ServerType.OTHER);
+            ConnectScreen.connect(new MultiplayerScreen(new TitleScreen()), client,
+                    ServerAddress.parse(target), info, true, null);
+        });
+    }
+
+    static String e2eQuickJoinTarget() {
+        String target = System.getProperty("mctransport.e2e.quickJoin");
+        if (target == null || target.trim().isEmpty()) {
+            return null;
+        }
+        return target.trim();
+    }
+
+    static int nextE2eQuickJoinReadyTicks(int currentTicks, boolean overlayClear,
+            boolean disconnected) {
+        if (!overlayClear || !disconnected) {
+            return 0;
+        }
+        return currentTicks + 1;
+    }
+
+    static boolean shouldAttemptE2eQuickJoin(int readyTicks) {
+        return readyTicks >= E2E_QUICK_JOIN_READY_TICKS;
     }
 
     static UUID extractClientPlayerUuid(Object client) {

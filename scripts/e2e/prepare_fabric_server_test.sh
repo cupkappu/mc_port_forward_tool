@@ -55,3 +55,6 @@ chmod +x "${FAKE_BIN}/curl" "${FAKE_BIN}/java"
 )
 
 test -f "${ROOT_DIR}/${TEST_REL}/fabric-server-launch.jar"
+grep -qx 'server-ip=127.0.0.1' "${ROOT_DIR}/${TEST_REL}/server.properties"
+grep -qx 'server-port=25565' "${ROOT_DIR}/${TEST_REL}/server.properties"
+grep -qx 'online-mode=false' "${ROOT_DIR}/${TEST_REL}/server.properties"

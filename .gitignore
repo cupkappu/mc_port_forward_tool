@@ -18,3 +18,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Runtime and E2E generated files
+run/
+*.pyc
+__pycache__/

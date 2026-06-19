@@ -3,6 +3,7 @@ package dev.kifuko.mctransport.client;
 import dev.kifuko.mctransport.auth.AuthPayload;
 import dev.kifuko.mctransport.config.ClientConfig;
 import dev.kifuko.mctransport.crypto.PskCipher;
+import dev.kifuko.mctransport.McTransport;
 import dev.kifuko.mctransport.net.TunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
@@ -131,6 +132,7 @@ public final class ClientTunnelSession {
             return;
         }
         authenticated = true;
+        McTransport.LOGGER.info("client tunnel authenticated");
         // Wake any pending stream opens.
     }
 

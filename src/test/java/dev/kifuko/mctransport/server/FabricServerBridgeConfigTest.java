@@ -6,11 +6,14 @@ import dev.kifuko.mctransport.protocol.SecureFrameCodec;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FabricServerBridgeConfigTest {
 
@@ -29,6 +32,16 @@ class FabricServerBridgeConfigTest {
         assertEquals("not-default", session.config().getPsk());
         assertEquals(3, session.config().getMaxStreamsPerPlayer());
         assertEquals(7, session.config().getConnectTimeoutSeconds());
+    }
+
+    @Test
+    void playerScopedSendIsSerializedForConcurrentServerStreamReaders() throws Exception {
+        Class<?> playerBridgeClass = Class.forName(
+                "dev.kifuko.mctransport.server.FabricServerTunnelBridge$PlayerBridge");
+        Method send = playerBridgeClass.getDeclaredMethod(
+                "send", dev.kifuko.mctransport.protocol.Frame.class);
+
+        assertTrue(Modifier.isSynchronized(send.getModifiers()));
     }
 
     private static final class TestBridge extends FabricServerTunnelBridge {

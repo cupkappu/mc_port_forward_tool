@@ -10,7 +10,22 @@ def payload_for(index: int, size: int) -> bytes:
     return (seed * ((size // len(seed)) + 1))[:size]
 
 
-def run_probe(host: str, port: int, timeout: float, index: int, size: int):
+def describe_mismatch(expected: bytes, actual: bytes, connections: int, size: int) -> str:
+    first_diff = next(
+        (i for i, (left, right) in enumerate(zip(expected, actual)) if left != right),
+        min(len(expected), len(actual)),
+    )
+    matching_probe = next(
+        (i for i in range(connections) if actual == payload_for(i, size)),
+        None,
+    )
+    detail = f"first_diff={first_diff}"
+    if matching_probe is not None:
+        detail += f", actual_matches_probe={matching_probe}"
+    return detail
+
+
+def run_probe(host: str, port: int, timeout: float, index: int, size: int, connections: int):
     expected = payload_for(index, size)
     started = time.time()
     with socket.create_connection((host, port), timeout=timeout) as sock:
@@ -27,6 +42,7 @@ def run_probe(host: str, port: int, timeout: float, index: int, size: int):
     if actual != expected:
         raise AssertionError(
             f"probe {index} mismatch: expected {len(expected)} bytes, got {len(actual)} bytes"
+            f" ({describe_mismatch(expected, actual, connections, size)})"
         )
     print(f"probe {index} ok: {len(expected)} bytes in {elapsed:.3f}s", flush=True)
 
@@ -44,7 +60,7 @@ def main():
 
     def worker(index: int):
         try:
-            run_probe(args.host, args.port, args.timeout, index, args.bytes)
+            run_probe(args.host, args.port, args.timeout, index, args.bytes, args.connections)
         except Exception as exc:
             errors.append((index, exc))
 
@@ -65,4 +81,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

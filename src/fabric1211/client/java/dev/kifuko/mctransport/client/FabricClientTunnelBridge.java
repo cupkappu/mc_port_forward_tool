@@ -3,6 +3,7 @@ package dev.kifuko.mctransport.client;
 import dev.kifuko.mctransport.McTransport;
 import dev.kifuko.mctransport.client.TransportPayload;
 import dev.kifuko.mctransport.crypto.PskCipher;
+import dev.kifuko.mctransport.net.SerialExecutor;
 import dev.kifuko.mctransport.net.TunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameCodec;
@@ -21,6 +22,7 @@ public final class FabricClientTunnelBridge implements TunnelBridge {
     private final FrameCodec codec;
     private final SecureFrameCodec secureCodec;
     private final TunnelExecutorsAdapter executors;
+    private final SerialExecutor inboundDispatcher;
     private Receiver receiver;
     private boolean closed;
 
@@ -31,6 +33,7 @@ public final class FabricClientTunnelBridge implements TunnelBridge {
         this.codec = codec;
         this.secureCodec = new SecureFrameCodec(cipher, maxPlainPayloadSize);
         this.executors = executors;
+        this.inboundDispatcher = new SerialExecutor(executors.io());
     }
 
     public synchronized void start() {
@@ -38,7 +41,7 @@ public final class FabricClientTunnelBridge implements TunnelBridge {
                 (payload, context) -> {
                     if (closed) return;
                     byte[] bytes = payload.bytes();
-                    executors.io().execute(() -> {
+                    inboundDispatcher.execute(() -> {
                         try {
                             Frame wireFrame = codec.decode(bytes);
                             Frame frame = secureCodec.decryptFromWire(wireFrame);

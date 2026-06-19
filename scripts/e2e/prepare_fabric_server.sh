@@ -48,6 +48,16 @@ fi
     -loader "$LOADER_VERSION" \
     -downloadMinecraft
   echo "eula=true" > eula.txt
+  cat > server.properties <<'EOF'
+server-ip=127.0.0.1
+server-port=25565
+online-mode=false
+motd=MC Transport Dialer E2E
+enable-command-block=false
+spawn-protection=0
+view-distance=6
+simulation-distance=4
+EOF
 )
 
 curl -fL \

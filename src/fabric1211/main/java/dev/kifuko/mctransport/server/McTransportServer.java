@@ -39,6 +39,8 @@ public final class McTransportServer implements DedicatedServerModInitializer {
             TransportPayload.ID = TransportPayload.buildId(channelId);
             PayloadTypeRegistry.playC2S().register(TransportPayload.ID,
                     TransportPayload.CODEC);
+            PayloadTypeRegistry.playS2C().register(TransportPayload.ID,
+                    TransportPayload.CODEC);
             FabricServerTunnelBridge bridge = new FabricServerTunnelBridge(channelId, codec, config,
                     new FabricServerTunnelBridge.TunnelExecutorsAdapter() {
                         @Override public java.util.concurrent.ExecutorService io() {
