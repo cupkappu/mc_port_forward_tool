@@ -11,6 +11,9 @@ import dev.kifuko.mctransport.protocol.FrameType;
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
@@ -30,6 +33,10 @@ public final class KcpServerStream implements ServerStream {
     private final ReservationState reservations;
     private final KcpCore kcp;
     private final KcpConfig kcpConfig;
+    private final int maxKcpFramePayloadSize;
+    private final Object kcpLock = new Object();
+    private final ArrayDeque<Frame> pendingKcpFrames = new ArrayDeque<>();
+    private boolean flushingKcpFrames;
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final byte protocolVersion;
 
@@ -46,6 +53,7 @@ public final class KcpServerStream implements ServerStream {
         this.budget = budget;
         this.reservations = reservations;
         this.kcpConfig = kcpConfig;
+        this.maxKcpFramePayloadSize = kcpConfig.mss() + KcpCore.IKCP_OVERHEAD;
         this.protocolVersion = protocolVersion;
         this.kcp = new KcpCore(streamId, new BridgeOutput());
         this.kcp.applyConfig(kcpConfig);
@@ -67,14 +75,22 @@ public final class KcpServerStream implements ServerStream {
     private void handleData(Frame frame) {
         if (frame.payloadLength() == 0) return;
         long now = System.currentTimeMillis();
-        kcp.input(ByteBuffer.wrap(frame.payload()), true, now);
-        kcp.update(now);
+        List<byte[]> received = new ArrayList<>();
+        synchronized (kcpLock) {
+            kcp.input(ByteBuffer.wrap(frame.payload()), true, now);
+            kcp.update(now);
 
-        try {
             ByteBuffer merged;
             while ((merged = kcp.recv()) != null) {
                 byte[] bytes = new byte[merged.remaining()];
                 merged.get(bytes);
+                received.add(bytes);
+            }
+        }
+        flushPendingKcpFrames();
+
+        try {
+            for (byte[] bytes : received) {
                 targetSocket.getOutputStream().write(bytes);
                 targetSocket.getOutputStream().flush();
                 budget.release(streamId, bytes.length, reservations);
@@ -99,8 +115,11 @@ public final class KcpServerStream implements ServerStream {
     public void sendTargetBytes(byte[] chunk, int length) {
         if (closed.get() || length <= 0) return;
         long now = System.currentTimeMillis();
-        kcp.send(ByteBuffer.wrap(chunk, 0, length));
-        kcp.update(now);
+        synchronized (kcpLock) {
+            kcp.send(ByteBuffer.wrap(chunk, 0, length));
+            kcp.update(now);
+        }
+        flushPendingKcpFrames();
     }
 
     @Override
@@ -150,10 +169,46 @@ public final class KcpServerStream implements ServerStream {
     }
 
     private void closeResources() {
-        kcp.release();
+        synchronized (kcpLock) {
+            kcp.release();
+            pendingKcpFrames.clear();
+        }
         budget.releaseAll(streamId, reservations);
         try { targetSocket.close(); } catch (IOException ignored) {}
         session.registry().remove(streamId);
+    }
+
+    private void enqueueKcpFrame(Frame frame) {
+        synchronized (kcpLock) {
+            pendingKcpFrames.add(frame);
+        }
+    }
+
+    private void flushPendingKcpFrames() {
+        synchronized (kcpLock) {
+            if (flushingKcpFrames) {
+                return;
+            }
+            flushingKcpFrames = true;
+        }
+        try {
+            while (true) {
+                Frame frame;
+                synchronized (kcpLock) {
+                    frame = pendingKcpFrames.poll();
+                    if (frame == null) {
+                        flushingKcpFrames = false;
+                        return;
+                    }
+                }
+                session.bridge().send(frame);
+            }
+        } catch (RuntimeException e) {
+            synchronized (kcpLock) {
+                flushingKcpFrames = false;
+            }
+            throw e;
+        }
     }
 
     private class BridgeOutput implements KcpOutput {
@@ -162,8 +217,8 @@ public final class KcpServerStream implements ServerStream {
             byte[] bytes = new byte[data.remaining()];
             data.get(bytes);
             Frame f = Frame.create(protocolVersion, 0, streamId,
-                    FrameType.DATA, (byte) 0, bytes, kcpConfig.mss());
-            session.bridge().send(f);
+                    FrameType.DATA, (byte) 0, bytes, maxKcpFramePayloadSize);
+            enqueueKcpFrame(f);
         }
     }
 }

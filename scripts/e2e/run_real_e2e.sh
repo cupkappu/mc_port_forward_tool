@@ -13,6 +13,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SERVER_DIR="${ROOT_DIR}/run/e2e-server-${VERSION}"
 RESULT_DIR="${ROOT_DIR}/docs/e2e-results"
 RESULT_FILE="${RESULT_DIR}/${VERSION}.md"
+MOD_VERSION="$(
+  awk -F= '$1 == "mod_version" { print $2 }' "${ROOT_DIR}/gradle.properties"
+)"
 
 case "$VERSION" in
   1.20.1)
@@ -72,7 +75,7 @@ Server is ready.
 Now launch a real Fabric ${VERSION} client with:
 - Fabric Loader 0.19.3
 - matching Fabric API
-- build/libs/mc-transport-dialer-${VERSION}-0.1.0.jar
+- build/libs/mc-transport-dialer-${VERSION}-${MOD_VERSION}.jar
 
 Join 127.0.0.1:25565. This script will wait for the client local listener
 127.0.0.1:25580 after the server pushes the route, then run TCP probes.

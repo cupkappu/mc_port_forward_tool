@@ -49,7 +49,7 @@ public final class KcpCore {
     public static final int IKCP_MTU_DEF = 1400;
     public static final int IKCP_INTERVAL = 100;
     /** KCP segment header size without ack mask */
-    public int IKCP_OVERHEAD = 24;
+    public static final int IKCP_OVERHEAD = 24;
     /** maximum dead link count before disconnect */
     public static final int IKCP_DEADLINK = 20;
     public static final int IKCP_THRESH_INIT = 2;

@@ -25,7 +25,10 @@ fi
 FABRIC_API_VERSION="$(
   awk -F= '$1 == "fabric_api_version" { print $2 }' "$VERSION_FILE"
 )"
-MOD_JAR="${ROOT_DIR}/build/libs/mc-transport-dialer-${VERSION}-0.1.0.jar"
+MOD_VERSION="$(
+  awk -F= '$1 == "mod_version" { print $2 }' "${ROOT_DIR}/gradle.properties"
+)"
+MOD_JAR="${ROOT_DIR}/build/libs/mc-transport-dialer-${VERSION}-${MOD_VERSION}.jar"
 
 if [[ ! -f "$MOD_JAR" ]]; then
   echo "missing ${MOD_JAR}; run ./gradlew build -PtargetMinecraft=${VERSION} first" >&2

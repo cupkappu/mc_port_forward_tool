@@ -39,12 +39,15 @@ public final class FakeTunnelBridge implements TunnelBridge {
     }
 
     @Override
-    public synchronized void send(Frame frame) {
-        if (closed) {
-            throw new IllegalStateException("bridge is closed");
+    public void send(Frame frame) {
+        Receiver ol;
+        synchronized (this) {
+            if (closed) {
+                throw new IllegalStateException("bridge is closed");
+            }
+            sent.add(frame);
+            ol = outboundListener;
         }
-        sent.add(frame);
-        Receiver ol = outboundListener;
         if (ol != null) {
             ol.onFrame(frame);
         }
@@ -56,8 +59,11 @@ public final class FakeTunnelBridge implements TunnelBridge {
     }
 
     /** Injects an inbound frame into the receiver, if one is registered. */
-    public synchronized void injectInbound(Frame frame) {
-        Receiver r = receiver;
+    public void injectInbound(Frame frame) {
+        Receiver r;
+        synchronized (this) {
+            r = receiver;
+        }
         if (r == null) {
             // No receiver: silent drop, mirroring real Minecraft where
             // frames arriving before the mod is ready are discarded.
