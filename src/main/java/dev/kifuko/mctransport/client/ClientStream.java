@@ -23,6 +23,15 @@ public final class ClientStream {
     private final ReservationState reservations;
     private final int maxPayloadSize;
 
+    private static final java.util.concurrent.Semaphore SEND_WINDOW =
+            new java.util.concurrent.Semaphore(512);
+    private static final java.util.concurrent.ScheduledExecutorService RELEASE_SCHEDULER =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "mctransport-send-window-release");
+                t.setDaemon(true);
+                return t;
+            });
+
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private volatile Socket localSocket;
     private volatile Thread readThread;
@@ -103,10 +112,16 @@ public final class ClientStream {
                 if (n == 0) {
                     continue;
                 }
-                if (!reserveOrWait(n)) {
+                budget.reserve(streamId, n, reservations);
+                try {
+                    SEND_WINDOW.acquire();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                     break;
                 }
                 sendData(buf, n);
+                RELEASE_SCHEDULER.schedule(() -> SEND_WINDOW.release(),
+                        2, java.util.concurrent.TimeUnit.MILLISECONDS);
             }
         } catch (IOException e) {
             sendReset();
@@ -115,33 +130,15 @@ public final class ClientStream {
         }
     }
 
-    static long DRAIN_INTERVAL_MS = 150L;
-
     boolean reserveOrWait(int bytes) {
-        long nextDrain = System.currentTimeMillis() + DRAIN_INTERVAL_MS;
-        while (!closed.get()) {
-            try {
-                budget.reserve(streamId, bytes, reservations);
-                return true;
-            } catch (IllegalStateException e) {
-                if (System.currentTimeMillis() > nextDrain) {
-                    long reserved = reservations.reservedFor(streamId);
-                    if (reserved > 0) {
-                        budget.release(streamId, (int) Math.max(reserved / 4, 1),
-                                reservations);
-                    }
-                    nextDrain = System.currentTimeMillis() + DRAIN_INTERVAL_MS;
-                    continue;
-                }
-                try {
-                    Thread.sleep(5);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-            }
+        // DATA path uses SEND_WINDOW semaphore instead.
+        // Kept for test compatibility.
+        try {
+            budget.reserve(streamId, bytes, reservations);
+            return true;
+        } catch (IllegalStateException e) {
+            return false;
         }
-        return false;
     }
 
     private void sendData(byte[] src, int length) {

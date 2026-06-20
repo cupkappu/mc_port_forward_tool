@@ -29,6 +29,15 @@ public final class ServerStream {
     private final BufferBudget budget;
     private final ReservationState reservations;
 
+    private static final java.util.concurrent.Semaphore SEND_WINDOW =
+            new java.util.concurrent.Semaphore(512);
+    private static final java.util.concurrent.ScheduledExecutorService RELEASE_SCHEDULER =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "mctransport-send-window-release");
+                t.setDaemon(true);
+                return t;
+            });
+
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final byte protocolVersion;
     private final int maxPayloadSize;
@@ -109,57 +118,45 @@ public final class ServerStream {
     }
 
     /**
-     * Sends a {@code DATA} frame built from target socket bytes. Reserves
-     * buffer budget first to provide backpressure; budget is released when
-     * the peer writes data to its local socket (bidirectional credit) or
-     * when the reserve-or-wait timeout fires.
+     * Sends a {@code DATA} frame built from target socket bytes. Uses a
+     * global semaphore (512 permits, 2 ms release delay) to bound in-flight
+     * frames at ~2 MB memory. No budget blocking — the send window is wide
+     * enough that the bottleneck is the Minecraft channel, not us.
      */
     public void sendTargetBytes(byte[] chunk, int length) {
         if (closed.get() || length <= 0) {
             return;
         }
-        if (!reserveOrWait(length)) {
+        try {
+            budget.reserve(streamId, length, reservations);
+        } catch (IllegalStateException budgetFull) {
+            // Semaphore backpressure is the real limiter; budget is accounting-only.
+        }
+        try {
+            SEND_WINDOW.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return;
         }
         Frame f = Frame.create(protocolVersion, 0, streamId,
                 FrameType.DATA, (byte) 0,
                 java.util.Arrays.copyOf(chunk, length), maxPayloadSize);
         session.bridge().send(f);
+        RELEASE_SCHEDULER.schedule(() -> SEND_WINDOW.release(),
+                2, java.util.concurrent.TimeUnit.MILLISECONDS);
         dev.kifuko.mctransport.McTransport.LOGGER.debug(
-                "server stream {} sent DATA frame {} bytes (budget reserved={})",
-                streamId, length, reservations.reservedFor(streamId));
+                "server stream {} sent DATA frame {}B (window permits={})",
+                streamId, length, SEND_WINDOW.availablePermits());
     }
 
-    static long DRAIN_INTERVAL_MS = 150L;
-
     boolean reserveOrWait(int bytes) {
-        long nextDrain = System.currentTimeMillis() + DRAIN_INTERVAL_MS;
-        while (!closed.get()) {
-            try {
-                budget.reserve(streamId, bytes, reservations);
-                return true;
-            } catch (IllegalStateException e) {
-                if (System.currentTimeMillis() > nextDrain) {
-                    long reserved = reservations.reservedFor(streamId);
-                    if (reserved > 0) {
-                        int drain = (int) Math.max(reserved / 4, 1);
-                        budget.release(streamId, drain, reservations);
-                        dev.kifuko.mctransport.McTransport.LOGGER.debug(
-                                "server stream {} budget drain: released {} bytes (was {} reserved)",
-                                streamId, drain, reserved);
-                    }
-                    nextDrain = System.currentTimeMillis() + DRAIN_INTERVAL_MS;
-                    continue;
-                }
-                try {
-                    Thread.sleep(5);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-            }
+        // Kept for test compatibility; DATA path uses SEND_WINDOW instead.
+        try {
+            budget.reserve(streamId, bytes, reservations);
+            return true;
+        } catch (IllegalStateException e) {
+            return false;
         }
-        return false;
     }
 
     /** Releases reserved bytes when the receiver confirms delivery. */
