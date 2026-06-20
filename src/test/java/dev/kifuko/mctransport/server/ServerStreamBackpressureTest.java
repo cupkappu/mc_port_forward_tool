@@ -40,7 +40,7 @@ class ServerStreamBackpressureTest {
                 new TargetTcpConnector(10, Executors.newSingleThreadExecutor()),
                 1_700_000_000L,
                 new NoopServerStreamFactoryForTest());
-        ServerStream stream = new ServerStream(session, 99, new Socket(), budget,
+        ServerStream stream = new DirectServerStream(session, 99, new Socket(), budget,
                 reservations, PlayerTunnelSession.PROTOCOL_VERSION, 8);
         byte[] chunk = new byte[]{1, 2, 3, 4};
 
@@ -72,7 +72,7 @@ class ServerStreamBackpressureTest {
                 new TargetTcpConnector(10, Executors.newSingleThreadExecutor()),
                 1_700_000_000L,
                 new NoopServerStreamFactoryForTest());
-        ServerStream stream = new ServerStream(session, 99, new Socket(), budget,
+        ServerStream stream = new DirectServerStream(session, 99, new Socket(), budget,
                 reservations, PlayerTunnelSession.PROTOCOL_VERSION, 8);
 
         // reserveOrWait no longer blocks; returns false immediately when full

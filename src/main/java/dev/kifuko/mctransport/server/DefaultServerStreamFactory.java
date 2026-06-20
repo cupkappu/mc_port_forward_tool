@@ -42,7 +42,7 @@ public final class DefaultServerStreamFactory implements ServerStreamFactory {
             return;
         }
         session.registry().registerServer(streamId);
-        ServerStream stream = new ServerStream(
+        ServerStream stream = new DirectServerStream(
                 session, streamId, socket,
                 session.budget(), session.reservations(),
                 PlayerTunnelSession.PROTOCOL_VERSION, maxPayloadSize);

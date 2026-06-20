@@ -82,7 +82,7 @@ class CloseResetSemanticsTest {
                                 java.util.concurrent.Executors.newSingleThreadExecutor()),
                         0L,
                         new dev.kifuko.mctransport.server.NoopServerStreamFactoryForTest());
-        dev.kifuko.mctransport.server.ServerStream ss = new dev.kifuko.mctransport.server.ServerStream(
+        dev.kifuko.mctransport.server.DirectServerStream ss = new dev.kifuko.mctransport.server.DirectServerStream(
                 playerSession, 1, sock, budget, res, (byte) 1, 1024);
         ss.closeClean();
         assertEquals(1, b.sentFrames().size());
