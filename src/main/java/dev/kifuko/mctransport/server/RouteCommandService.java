@@ -32,17 +32,19 @@ public final class RouteCommandService {
         RouteConfig route = new RouteConfig(uuid, playerName,
                 listenPort, targetHost, targetPort, mode);
         store.setRoute(route);
-        applier.apply(uuid);
+        applier.apply(uuid, listenPort);
         return "Set route for " + route.getPlayerName() + " (" + uuid + "): "
                 + route.getListenHost() + ":" + route.getListenPort()
                 + " -> " + route.getTargetHost() + ":" + route.getTargetPort()
                 + " (mode=" + route.getMode() + ")";
     }
 
-    public String unsetRoute(UUID uuid, String playerName) {
-        store.removeRoute(uuid);
-        applier.clear(uuid);
-        return "Removed route for " + playerName + " (" + uuid + ")";
+    public String unsetRoute(UUID uuid, String playerName, int listenPort) {
+        boolean removed = store.removeRoute(uuid, listenPort);
+        applier.clear(uuid, listenPort);
+        return (removed ? "Removed route for " : "No route found for ")
+                + playerName + " (" + uuid + ") "
+                + RouteConfig.LOOPBACK_HOST + ":" + listenPort;
     }
 
     public List<String> listRoutes() {
@@ -54,7 +56,8 @@ public final class RouteCommandService {
                 .map(r -> r.getPlayerName()
                         + " (" + r.getPlayerUuid() + ") "
                         + r.getListenHost() + ":" + r.getListenPort()
-                        + " -> " + r.getTargetHost() + ":" + r.getTargetPort())
+                        + " -> " + r.getTargetHost() + ":" + r.getTargetPort()
+                        + " (mode=" + r.getMode() + ")")
                 .toList();
     }
 
@@ -64,8 +67,8 @@ public final class RouteCommandService {
 
     /** Hooks the bridge uses to push config frames to online players. */
     public interface OnlineRouteApplier {
-        void apply(UUID uuid);
+        void apply(UUID uuid, int listenPort);
 
-        void clear(UUID uuid);
+        void clear(UUID uuid, int listenPort);
     }
 }

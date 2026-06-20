@@ -57,11 +57,11 @@ public final class McTransportServer implements DedicatedServerModInitializer {
 
             RouteCommandService commandService = new RouteCommandService(routeStore,
                     new RouteCommandService.OnlineRouteApplier() {
-                        @Override public void apply(java.util.UUID uuid) {
-                            bridge.applyRouteIfOnline(uuid);
+                        @Override public void apply(java.util.UUID uuid, int listenPort) {
+                            bridge.applyRouteIfOnline(uuid, listenPort);
                         }
-                        @Override public void clear(java.util.UUID uuid) {
-                            bridge.clearRouteIfOnline(uuid);
+                        @Override public void clear(java.util.UUID uuid, int listenPort) {
+                            bridge.clearRouteIfOnline(uuid, listenPort);
                         }
                     });
 

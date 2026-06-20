@@ -111,7 +111,7 @@ public class FabricServerTunnelBridge implements TunnelBridge {
     }
 
     /** Pushes the latest route config to an online player, if any. */
-    public void applyRouteIfOnline(UUID uuid) {
+    public void applyRouteIfOnline(UUID uuid, int listenPort) {
         PlayerTunnelSession session = sessionsByPlayer.get(uuid);
         if (session != null) {
             session.sendRouteIfConfigured();
@@ -119,7 +119,7 @@ public class FabricServerTunnelBridge implements TunnelBridge {
     }
 
     /** Clears the route config on an online player. */
-    public void clearRouteIfOnline(UUID uuid) {
+    public void clearRouteIfOnline(UUID uuid, int listenPort) {
         PlayerTunnelSession session = sessionsByPlayer.get(uuid);
         if (session != null) {
             session.sendRouteClear();

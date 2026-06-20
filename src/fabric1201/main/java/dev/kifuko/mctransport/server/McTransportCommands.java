@@ -60,8 +60,11 @@ public final class McTransportCommands {
             RouteCommandService service) {
         return CommandManager.literal("unset")
                 .then(CommandManager.argument("playerName", StringArgumentType.word())
-                        .executes(ctx -> unset(service, ctx.getSource(),
-                                StringArgumentType.getString(ctx, "playerName"))));
+                        .then(CommandManager.argument("listenPort",
+                                        IntegerArgumentType.integer(1, 65535))
+                                .executes(ctx -> unset(service, ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "playerName"),
+                                        IntegerArgumentType.getInteger(ctx, "listenPort")))));
     }
 
     private static com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource> listCommand(
@@ -94,9 +97,9 @@ public final class McTransportCommands {
     }
 
     private static int unset(RouteCommandService service, ServerCommandSource source,
-                             String playerName) {
+                             String playerName, int listenPort) {
         ResolvedPlayer player = resolvePlayer(source.getServer(), playerName);
-        String message = service.unsetRoute(player.uuid(), player.name());
+        String message = service.unsetRoute(player.uuid(), player.name(), listenPort);
         source.sendFeedback(() -> Text.literal(message), true);
         return 1;
     }
