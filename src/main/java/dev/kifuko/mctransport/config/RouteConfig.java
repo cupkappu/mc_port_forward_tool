@@ -1,5 +1,7 @@
 package dev.kifuko.mctransport.config;
 
+import dev.kifuko.mctransport.protocol.StreamMode;
+
 import java.util.Objects;
 import java.util.UUID;
 
@@ -21,12 +23,22 @@ public final class RouteConfig {
     private final int listenPort;
     private final String targetHost;
     private final int targetPort;
+    private final StreamMode mode;
 
     public RouteConfig(UUID playerUuid,
                        String playerName,
                        int listenPort,
                        String targetHost,
                        int targetPort) {
+        this(playerUuid, playerName, listenPort, targetHost, targetPort, StreamMode.DIRECT);
+    }
+
+    public RouteConfig(UUID playerUuid,
+                       String playerName,
+                       int listenPort,
+                       String targetHost,
+                       int targetPort,
+                       StreamMode mode) {
         if (playerUuid == null) {
             throw new IllegalArgumentException("playerUuid must not be null");
         }
@@ -44,6 +56,7 @@ public final class RouteConfig {
         this.listenPort = listenPort;
         this.targetHost = targetHost.trim();
         this.targetPort = targetPort;
+        this.mode = mode == null ? StreamMode.DIRECT : mode;
     }
 
     public UUID getPlayerUuid() {
@@ -70,6 +83,10 @@ public final class RouteConfig {
         return targetPort;
     }
 
+    public StreamMode getMode() {
+        return mode;
+    }
+
     private static void validatePort(int port, String field) {
         if (port < 1 || port > 65535) {
             throw new IllegalArgumentException(
@@ -83,6 +100,7 @@ public final class RouteConfig {
         if (!(o instanceof RouteConfig other)) return false;
         return listenPort == other.listenPort
                 && targetPort == other.targetPort
+                && mode == other.mode
                 && Objects.equals(playerUuid, other.playerUuid)
                 && Objects.equals(playerName, other.playerName)
                 && Objects.equals(listenHost, other.listenHost)
@@ -92,7 +110,7 @@ public final class RouteConfig {
     @Override
     public int hashCode() {
         return Objects.hash(playerUuid, playerName, listenHost, listenPort,
-                targetHost, targetPort);
+                targetHost, targetPort, mode);
     }
 
     @Override
@@ -104,6 +122,7 @@ public final class RouteConfig {
                 + ", listenPort=" + listenPort
                 + ", targetHost='" + targetHost + '\''
                 + ", targetPort=" + targetPort
+                + ", mode=" + mode
                 + '}';
     }
 }

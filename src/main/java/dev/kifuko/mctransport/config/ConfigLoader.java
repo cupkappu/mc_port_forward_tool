@@ -1,5 +1,7 @@
 package dev.kifuko.mctransport.config;
 
+import dev.kifuko.mctransport.protocol.StreamMode;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -104,6 +106,7 @@ public final class ConfigLoader {
             out.append("listen_port = ").append(route.getListenPort()).append('\n');
             out.append("target_host = \"").append(escapeString(route.getTargetHost())).append("\"\n");
             out.append("target_port = ").append(route.getTargetPort()).append('\n');
+            out.append("stream_mode = \"").append(route.getMode().name()).append("\"\n");
         }
         try {
             Files.writeString(file, out.toString(), StandardCharsets.UTF_8);
@@ -127,7 +130,9 @@ public final class ConfigLoader {
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("invalid route player_uuid: " + uuidStr, e);
         }
-        return new RouteConfig(uuid, name, (int) listenPort, targetHost, (int) targetPort);
+        Object modeObj = table.get("stream_mode");
+        StreamMode mode = modeObj instanceof String s ? StreamMode.fromString(s) : StreamMode.DIRECT;
+        return new RouteConfig(uuid, name, (int) listenPort, targetHost, (int) targetPort, mode);
     }
 
     private static String escapeString(String s) {
