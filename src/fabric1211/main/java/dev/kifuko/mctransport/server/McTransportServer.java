@@ -6,15 +6,17 @@ import dev.kifuko.mctransport.config.ConfigLoader;
 import dev.kifuko.mctransport.config.ServerConfig;
 import dev.kifuko.mctransport.net.TransportExecutors;
 import dev.kifuko.mctransport.protocol.FrameCodec;
-import dev.kifuko.mctransport.protocol.SecureFrameCodec;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.util.Identifier;
 
 /**
- * Dedicated-server Fabric entrypoint. Loads the config and starts the
- * server-side Fabric bridge.
+ * Dedicated-server Fabric entrypoint for Minecraft 1.21.1.
+ *
+ * <p>The server owns the {@link RouteStore} and {@link RouteCommandService}.
+ * Routes are configured at runtime via the {@code /mctransport} command;
+ * the bundled config file persists routes across restarts.</p>
  */
 public final class McTransportServer implements DedicatedServerModInitializer {
 
@@ -32,8 +34,7 @@ public final class McTransportServer implements DedicatedServerModInitializer {
                 return;
             }
             TransportExecutors executors = new TransportExecutors(McTransport.MOD_ID);
-            FrameCodec codec = new FrameCodec(
-                    SecureFrameCodec.encryptedPayloadLimit(config.getStreamBufferSize()));
+            FrameCodec codec = new FrameCodec(config.getStreamBufferSize());
             String[] parts = config.getChannelName().split(":");
             Identifier channelId = Identifier.of(parts[0], parts[1]);
             TransportPayload.ID = TransportPayload.buildId(channelId);
@@ -41,16 +42,32 @@ public final class McTransportServer implements DedicatedServerModInitializer {
                     TransportPayload.CODEC);
             PayloadTypeRegistry.playS2C().register(TransportPayload.ID,
                     TransportPayload.CODEC);
+
+            RouteStore routeStore = new RouteStore(
+                    FabricLoader.getInstance().getConfigDir(), CONFIG_FILE, config);
+
             FabricServerTunnelBridge bridge = new FabricServerTunnelBridge(channelId, codec, config,
+                    routeStore,
                     new FabricServerTunnelBridge.TunnelExecutorsAdapter() {
                         @Override public java.util.concurrent.ExecutorService io() {
                             return executors.io();
                         }
                     });
             bridge.start();
-            McTransport.LOGGER.info("server tunnel bridge registered on channel {}; target {}:{}",
-                    config.getChannelName(),
-                    config.getTargetHost(), config.getTargetPort());
+
+            RouteCommandService commandService = new RouteCommandService(routeStore,
+                    new RouteCommandService.OnlineRouteApplier() {
+                        @Override public void apply(java.util.UUID uuid) {
+                            bridge.applyRouteIfOnline(uuid);
+                        }
+                        @Override public void clear(java.util.UUID uuid) {
+                            bridge.clearRouteIfOnline(uuid);
+                        }
+                    });
+
+            McTransportCommands.register(commandService);
+            McTransport.LOGGER.info("server tunnel bridge registered on channel {}; {} routes configured",
+                    config.getChannelName(), routeStore.routes().size());
         } catch (RuntimeException e) {
             McTransport.LOGGER.error("server init failed", e);
         }

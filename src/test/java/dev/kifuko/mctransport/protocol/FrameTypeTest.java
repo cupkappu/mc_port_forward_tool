@@ -9,8 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class FrameTypeTest {
 
     @Test
-    void allNineTypesAreDefined() {
-        assertEquals(9, FrameType.values().length);
+    void allTwelveTypesAreDefined() {
+        assertEquals(12, FrameType.values().length);
     }
 
     @Test
@@ -24,6 +24,9 @@ class FrameTypeTest {
         assertEquals(7, FrameType.PING.id());
         assertEquals(8, FrameType.PONG.id());
         assertEquals(9, FrameType.ERROR.id());
+        assertEquals(10, FrameType.CONFIG_APPLY.id());
+        assertEquals(11, FrameType.CONFIG_CLEAR.id());
+        assertEquals(12, FrameType.CONFIG_ACK.id());
     }
 
     @Test

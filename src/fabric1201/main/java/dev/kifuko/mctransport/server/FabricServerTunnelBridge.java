@@ -2,13 +2,10 @@ package dev.kifuko.mctransport.server;
 
 import dev.kifuko.mctransport.McTransport;
 import dev.kifuko.mctransport.config.ServerConfig;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.SerialExecutor;
 import dev.kifuko.mctransport.net.TunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameCodec;
-import dev.kifuko.mctransport.protocol.FrameType;
-import dev.kifuko.mctransport.protocol.SecureFrameCodec;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -17,32 +14,36 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
 
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Server-side Fabric 1.20.1 bridge using raw custom payload channels.
+ * Server-side Fabric 1.20.1 bridge. Each connected player owns one
+ * {@link PlayerTunnelSession}; control and stream frames are dispatched
+ * by player UUID.
  */
 public class FabricServerTunnelBridge implements TunnelBridge {
 
     private final Identifier channel;
     private final FrameCodec codec;
     private final ServerConfig config;
-    private final SecureFrameCodec secureCodec;
+    private final RouteStore routeStore;
     private final TunnelExecutorsAdapter executors;
-    private final Map<java.util.UUID, PlayerTunnelSession> sessionsByPlayer = new ConcurrentHashMap<>();
-    private final Map<java.util.UUID, SerialExecutor> dispatchersByPlayer = new ConcurrentHashMap<>();
+    private final Map<UUID, PlayerTunnelSession> sessionsByPlayer = new ConcurrentHashMap<>();
+    private final Map<UUID, SerialExecutor> dispatchersByPlayer = new ConcurrentHashMap<>();
     private final Map<PlayerTunnelSession, Object> sessionToPlayer = new ConcurrentHashMap<>();
     private boolean started;
     private boolean closed;
 
     public FabricServerTunnelBridge(Identifier channel, FrameCodec codec,
                                     ServerConfig config,
+                                    RouteStore routeStore,
                                     TunnelExecutorsAdapter executors) {
         this.channel = channel;
         this.codec = codec;
         this.config = config;
-        this.secureCodec = new SecureFrameCodec(new PskCipher(config.getPsk()),
-                config.getStreamBufferSize());
+        this.routeStore = routeStore;
         this.executors = executors;
     }
 
@@ -59,16 +60,17 @@ public class FabricServerTunnelBridge implements TunnelBridge {
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             ServerPlayerEntity player = handler.getPlayer();
-            java.util.UUID playerUuid = player.getUuid();
+            UUID playerUuid = player.getUuid();
             PlayerTunnelSession session = createSession(player);
             dispatchersByPlayer.put(playerUuid, new SerialExecutor(executors.io()));
             sessionsByPlayer.put(playerUuid, session);
             sessionToPlayer.put(session, player);
             McTransport.LOGGER.info("player {} joined; tunnel session ready", playerUuid);
+            session.sendRouteIfConfigured();
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             ServerPlayerEntity player = handler.getPlayer();
-            java.util.UUID playerUuid = player.getUuid();
+            UUID playerUuid = player.getUuid();
             PlayerTunnelSession session = sessionsByPlayer.remove(playerUuid);
             dispatchersByPlayer.remove(playerUuid);
             if (session != null) {
@@ -87,7 +89,7 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         return bytes;
     }
 
-    private void dispatchToPlayerUuid(java.util.UUID playerUuid, byte[] bytes) {
+    private void dispatchToPlayerUuid(UUID playerUuid, byte[] bytes) {
         SerialExecutor dispatcher = dispatchersByPlayer.get(playerUuid);
         if (dispatcher == null) {
             McTransport.LOGGER.warn("inbound frame for unknown player {}", playerUuid);
@@ -101,31 +103,45 @@ public class FabricServerTunnelBridge implements TunnelBridge {
             }
             try {
                 Frame wireFrame = codec.decode(bytes);
-                Frame frame = wireFrame.type() == FrameType.AUTH
-                        ? wireFrame
-                        : secureCodec.decryptFromWire(wireFrame);
-                session.handleInbound(frame);
+                session.handleInbound(wireFrame);
             } catch (RuntimeException e) {
                 McTransport.LOGGER.warn("failed to decode inbound frame: {}", e.getMessage());
             }
         });
     }
 
+    /** Pushes the latest route config to an online player, if any. */
+    public void applyRouteIfOnline(UUID uuid) {
+        PlayerTunnelSession session = sessionsByPlayer.get(uuid);
+        if (session != null) {
+            session.sendRouteIfConfigured();
+        }
+    }
+
+    /** Clears the route config on an online player. */
+    public void clearRouteIfOnline(UUID uuid) {
+        PlayerTunnelSession session = sessionsByPlayer.get(uuid);
+        if (session != null) {
+            session.sendRouteClear();
+        }
+    }
+
     protected PlayerTunnelSession createSession(Object player) {
         ServerConfig cfg = config;
-        TargetTcpConnector connector = new TargetTcpConnector(cfg.getTargetHost(),
-                cfg.getTargetPort(), cfg.getConnectTimeoutSeconds(), executors.io());
+        TargetTcpConnector connector = new TargetTcpConnector(
+                cfg.getConnectTimeoutSeconds(), executors.io());
         DefaultServerStreamFactory factory = new DefaultServerStreamFactory(connector,
                 cfg.getStreamBufferSize(), 4096, executors.io());
-        return new PlayerTunnelSession(cfg, new PlayerBridge(player),
-                new PskCipher(cfg.getPsk()),
-                new dev.kifuko.mctransport.stream.StreamRegistry(cfg.getMaxStreamsPerPlayer(), false),
-                new dev.kifuko.mctransport.buffer.BufferBudget(cfg.getStreamBufferSize(),
-                        cfg.getGlobalBufferSizePerPlayer()),
+        UUID uuid = player instanceof ServerPlayerEntity sp
+                ? sp.getUuid() : UUID.randomUUID();
+        return new PlayerTunnelSession(uuid, new PlayerBridge(player), cfg, routeStore,
+                new dev.kifuko.mctransport.stream.StreamRegistry(
+                        cfg.getMaxStreamsPerPlayer(), false),
+                new dev.kifuko.mctransport.buffer.BufferBudget(
+                        cfg.getStreamBufferSize(), cfg.getGlobalBufferSizePerPlayer()),
                 new dev.kifuko.mctransport.buffer.ReservationState(),
                 connector,
-                System.currentTimeMillis() / 1000L, System.currentTimeMillis(),
-                factory);
+                System.currentTimeMillis(), factory);
     }
 
     @Override
@@ -150,6 +166,11 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         dispatchersByPlayer.clear();
     }
 
+    /** Visible for tests. */
+    public Optional<PlayerTunnelSession> sessionFor(UUID uuid) {
+        return Optional.ofNullable(sessionsByPlayer.get(uuid));
+    }
+
     public interface TunnelExecutorsAdapter {
         java.util.concurrent.ExecutorService io();
     }
@@ -166,8 +187,7 @@ public class FabricServerTunnelBridge implements TunnelBridge {
             if (closed) {
                 throw new IllegalStateException("bridge is closed");
             }
-            Frame wireFrame = secureCodec.encryptForWire(frame);
-            byte[] encoded = codec.encode(wireFrame);
+            byte[] encoded = codec.encode(frame);
             PacketByteBuf buf = PacketByteBufs.create();
             buf.writeBytes(encoded);
             ServerPlayNetworking.send((ServerPlayerEntity) player, channel, buf);

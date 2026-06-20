@@ -8,14 +8,8 @@ import java.util.concurrent.ExecutorService;
 
 /**
  * Default {@link ServerStreamFactory}: keeps an in-memory map of active
- * streams per session, and dials the fixed target via
+ * streams per session and dials the route's target via
  * {@link TargetTcpConnector} on {@code OPEN}.
- *
- * <p>The factory itself does NOT run network I/O on the caller thread;
- * callers (e.g. a future Fabric bridge) are expected to dispatch
- * {@link #dialAndAttach} to a transport executor. The connector's blocking
- * dial happens synchronously inside this method for MVP simplicity; the
- * caller dispatches off the Minecraft thread before invoking.</p>
  */
 public final class DefaultServerStreamFactory implements ServerStreamFactory {
 
@@ -35,9 +29,14 @@ public final class DefaultServerStreamFactory implements ServerStreamFactory {
 
     @Override
     public synchronized void dialAndAttach(PlayerTunnelSession session, int streamId) {
+        var route = session.activeRoute();
+        if (route == null) {
+            sendReset(session, streamId);
+            return;
+        }
         Socket socket;
         try {
-            socket = connector.connect();
+            socket = connector.connect(route.getTargetHost(), route.getTargetPort());
         } catch (IOException e) {
             sendReset(session, streamId);
             return;
@@ -73,7 +72,6 @@ public final class DefaultServerStreamFactory implements ServerStreamFactory {
         map.clear();
     }
 
-    /** Removes a single stream from the registry without touching the socket. */
     public synchronized void forget(PlayerTunnelSession session, int streamId) {
         Map<Integer, ServerStream> map = streams.get(session);
         if (map != null) {
@@ -83,7 +81,7 @@ public final class DefaultServerStreamFactory implements ServerStreamFactory {
 
     private void sendReset(PlayerTunnelSession session, int streamId) {
         session.bridge().send(dev.kifuko.mctransport.protocol.Frame.createTrusted(
-                PlayerTunnelSession.PROTOCOL_VERSION, 0, streamId,
+                PlayerTunnelSession.PROTOCOL_VERSION, PlayerTunnelSession.SESSION_ID, streamId,
                 dev.kifuko.mctransport.protocol.FrameType.RESET, (byte) 0, new byte[0]));
     }
 }

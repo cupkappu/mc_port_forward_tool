@@ -1,7 +1,6 @@
 package dev.kifuko.mctransport.client;
 
 import dev.kifuko.mctransport.McTransport;
-import dev.kifuko.mctransport.config.ClientConfig;
 import dev.kifuko.mctransport.net.TransportExecutors;
 
 import java.io.IOException;
@@ -21,7 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class LocalTcpListener {
 
-    private final ClientConfig config;
+    private final String listenHost;
+    private final int listenPort;
     private final TransportExecutors executors;
     private final ClientTunnelSessionProvider sessionProvider;
     private final Runnable onStreamAttached;
@@ -30,11 +30,13 @@ public final class LocalTcpListener {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread acceptThread;
 
-    public LocalTcpListener(ClientConfig config,
+    public LocalTcpListener(String listenHost,
+                            int listenPort,
                             TransportExecutors executors,
                             ClientTunnelSessionProvider sessionProvider,
                             Runnable onStreamAttached) {
-        this.config = config;
+        this.listenHost = listenHost;
+        this.listenPort = listenPort;
         this.executors = executors;
         this.sessionProvider = sessionProvider;
         this.onStreamAttached = onStreamAttached == null ? () -> { } : onStreamAttached;
@@ -46,12 +48,12 @@ public final class LocalTcpListener {
             return;
         }
         ServerSocket ss = new ServerSocket();
-        ss.bind(new InetSocketAddress(config.getListenHost(), config.getListenPort()));
+        ss.bind(new InetSocketAddress(listenHost, listenPort));
         ss.setSoTimeout(500);
         this.serverSocket = ss;
         running.set(true);
         McTransport.LOGGER.info("listening on {}:{}",
-                config.getListenHost(), config.getListenPort());
+                listenHost, boundPort());
         Thread t = new Thread(this::runAcceptLoop, "mctransport-client-accept");
         t.setDaemon(true);
         this.acceptThread = t;
@@ -81,7 +83,7 @@ public final class LocalTcpListener {
 
     private void handleAccept(Socket socket) {
         ClientTunnelSession session = sessionProvider.session();
-        if (!config.isEnabled() || session == null || !session.isAuthenticated()) {
+        if (session == null || !session.isAuthenticated()) {
             try {
                 socket.close();
             } catch (IOException ignored) {

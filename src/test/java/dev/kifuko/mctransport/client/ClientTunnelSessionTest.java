@@ -1,17 +1,14 @@
 package dev.kifuko.mctransport.client;
 
-import dev.kifuko.mctransport.auth.AuthPayload;
-import dev.kifuko.mctransport.config.ClientConfig;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.FakeTunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.protocol.ProtocolException;
+import dev.kifuko.mctransport.protocol.RouteControlPayload;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 import org.junit.jupiter.api.Test;
 
-import java.security.SecureRandom;
-import java.util.UUID;
+import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -21,78 +18,72 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientTunnelSessionTest {
 
-    private static final SecureRandom FIXED = new SecureRandom() {
-        private static final long serialVersionUID = 1L;
-        private int c = 0;
-        @Override public void nextBytes(byte[] b) {
-            for (int i = 0; i < b.length; i++) b[i] = (byte) (c++);
-        }
-    };
-
-    private static final UUID PLAYER_UUID =
-            UUID.fromString("11111111-2222-3333-4444-555555555555");
-
-    private ClientConfig newConfig() {
-        return new ClientConfig(true, "127.0.0.1", 25580,
-                "mctransport:main", "shared", 8, 1024, 8192L, "info");
-    }
-
-    private ClientTunnelSession buildSession(FakeTunnelBridge bridge, ClientStreamFactory factory) {
+    private ClientTunnelSession buildSession(FakeTunnelBridge bridge,
+                                             ClientStreamFactory factory,
+                                             FakeListenerController listener) {
         StreamRegistry registry = new StreamRegistry(8, true);
-        PskCipher cipher = new PskCipher("shared", FIXED);
-        return new ClientTunnelSession(newConfig(), bridge, cipher, registry,
-                factory, FIXED, 0L);
+        return new ClientTunnelSession(bridge, registry, factory, 0L, listener);
     }
 
     private FakeTunnelBridge buildBridge() {
         FakeTunnelBridge b = new FakeTunnelBridge();
-        b.setReceiver(frame -> { /* unused in these tests */ });
+        b.setReceiver(frame -> { });
         return b;
     }
 
-    @Test
-    void sendAuthEmitsEncryptedAuthFrame() {
-        FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
-        s.sendAuth(PLAYER_UUID, 1_700_000_000L);
-        assertEquals(1, b.sentFrames().size());
-        Frame f = b.sentFrames().get(0);
-        assertEquals(FrameType.AUTH, f.type());
-        assertTrue(f.payload().length > 0, "payload must be encrypted (non-empty)");
-
-        // Decrypt to confirm wire format.
-        PskCipher cipher = new PskCipher("shared", FIXED);
-        byte[] plaintext = cipher.decrypt(f, f.payload());
-        // The plaintext should be the AuthPayload encoding itself.
-        AuthPayload.Decoded decoded = AuthPayload.decode(plaintext,
-                ClientTunnelSession.PROTOCOL_VERSION, 3600, 1_700_000_000L);
-        assertEquals(PLAYER_UUID, decoded.playerUuid());
+    private Frame configApply(int port) {
+        return Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
+                0, 0, FrameType.CONFIG_APPLY, (byte) 0,
+                RouteControlPayload.encodeApply("127.0.0.1", port));
     }
 
     @Test
-    void authOkMarksSessionAuthenticated() {
+    void configApplyStartsListenerAndSendsAck() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
-        Frame authOk = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.AUTH_OK, (byte) 0, new byte[0]);
-        s.handleInbound(authOk);
+        FakeListenerController listener = new FakeListenerController();
+        ClientTunnelSession s = buildSession(b, (sess, id) -> null, listener);
+        s.handleInbound(configApply(25580));
+
         assertTrue(s.isAuthenticated());
+        assertEquals("127.0.0.1", listener.host);
+        assertEquals(25580, listener.port);
+        assertEquals(1, b.sentFrames().size());
+        Frame ack = b.sentFrames().get(0);
+        assertEquals(FrameType.CONFIG_ACK, ack.type());
+        assertTrue(RouteControlPayload.decodeAck(ack.payload()).ok());
     }
 
     @Test
-    void openLocalStreamBeforeAuthFails() {
+    void failedConfigApplySendsNegativeAck() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
+        FakeListenerController listener = new FakeListenerController();
+        listener.failApply = true;
+        ClientTunnelSession s = buildSession(b, (sess, id) -> null, listener);
+        s.handleInbound(configApply(25580));
+
+        assertFalse(s.isAuthenticated());
+        assertEquals(1, b.sentFrames().size());
+        RouteControlPayload.Ack ack = RouteControlPayload.decodeAck(
+                b.sentFrames().get(0).payload());
+        assertFalse(ack.ok());
+        assertTrue(ack.message().contains("failed to bind"));
+    }
+
+    @Test
+    void openLocalStreamBeforeConfigApplyFails() {
+        FakeTunnelBridge b = buildBridge();
+        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+                new FakeListenerController());
         assertThrows(IllegalStateException.class, s::openLocalStream);
     }
 
     @Test
-    void openLocalStreamAfterAuthAllocatesAndSendsOpen() {
+    void openLocalStreamAfterConfigApplyAllocatesAndSendsOpen() {
         FakeTunnelBridge b = buildBridge();
         FakeFactory factory = new FakeFactory();
-        ClientTunnelSession s = buildSession(b, factory);
-        s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.AUTH_OK, (byte) 0, new byte[0]));
+        ClientTunnelSession s = buildSession(b, factory, new FakeListenerController());
+        s.handleInbound(configApply(25580));
+        b.clearSent();
 
         ClientStream stream = s.openLocalStream();
         assertSame(factory.created.get(0), stream);
@@ -102,20 +93,42 @@ class ClientTunnelSessionTest {
     }
 
     @Test
-    void pingBeforeAuthIsRejected() {
+    void configClearStopsListenerClosesStreamsAndSendsAck() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
+        FakeFactory factory = new FakeFactory();
+        FakeListenerController listener = new FakeListenerController();
+        ClientTunnelSession s = buildSession(b, factory, listener);
+        s.handleInbound(configApply(25580));
+        b.clearSent();
+        s.openLocalStream();
+
+        s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
+                0, 0, FrameType.CONFIG_CLEAR, (byte) 0, new byte[0]));
+
+        assertFalse(s.isAuthenticated());
+        assertFalse(listener.isListening());
+        assertEquals(0, s.streams().size());
+        assertEquals(0, s.registry().size());
+        assertEquals(FrameType.CONFIG_ACK,
+                b.sentFrames().get(b.sentFrames().size() - 1).type());
+    }
+
+    @Test
+    void pingBeforeConfigApplyIsRejected() {
+        FakeTunnelBridge b = buildBridge();
+        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+                new FakeListenerController());
         Frame ping = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
                 0, 0, FrameType.PING, (byte) 0, new byte[0]);
         assertThrows(ProtocolException.class, () -> s.handleInbound(ping));
     }
 
     @Test
-    void pingAfterAuthTriggersPong() {
+    void pingAfterConfigApplyTriggersPong() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
-        s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.AUTH_OK, (byte) 0, new byte[0]));
+        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+                new FakeListenerController());
+        s.handleInbound(configApply(25580));
         b.clearSent();
         s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
                 0, 7, FrameType.PING, (byte) 0, new byte[0]));
@@ -125,21 +138,11 @@ class ClientTunnelSessionTest {
     }
 
     @Test
-    void authFromServerIsRejected() {
-        FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
-        Frame auth = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.AUTH, (byte) 0, new byte[0]);
-        ProtocolException ex = assertThrows(ProtocolException.class, () -> s.handleInbound(auth));
-        assertTrue(ex.getMessage().contains("unexpected AUTH"));
-    }
-
-    @Test
     void dataForUnknownStreamSendsReset() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
-        s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.AUTH_OK, (byte) 0, new byte[0]));
+        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+                new FakeListenerController());
+        s.handleInbound(configApply(25580));
         b.clearSent();
         s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
                 0, 99, FrameType.DATA, (byte) 0, "hi".getBytes()));
@@ -149,21 +152,22 @@ class ClientTunnelSessionTest {
     }
 
     @Test
-    void tickBeforeAuthDoesNothing() {
+    void tickBeforeConfigApplyDoesNothing() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
+        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+                new FakeListenerController());
         s.setPingIntervalMillis(10);
         s.tick(10_000L);
         assertEquals(0, b.sentFrames().size());
     }
 
     @Test
-    void tickAfterAuthSendsPingAfterInterval() {
+    void tickAfterConfigApplySendsPingAfterInterval() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null);
+        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+                new FakeListenerController());
         s.setPingIntervalMillis(100);
-        s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.AUTH_OK, (byte) 0, new byte[0]));
+        s.handleInbound(configApply(25580));
         b.clearSent();
         s.tick(50L);
         assertEquals(0, b.sentFrames().size());
@@ -176,9 +180,8 @@ class ClientTunnelSessionTest {
     void closeClearsStreamsAndRegistry() {
         FakeTunnelBridge b = buildBridge();
         FakeFactory factory = new FakeFactory();
-        ClientTunnelSession s = buildSession(b, factory);
-        s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.AUTH_OK, (byte) 0, new byte[0]));
+        ClientTunnelSession s = buildSession(b, factory, new FakeListenerController());
+        s.handleInbound(configApply(25580));
         s.openLocalStream();
         s.openLocalStream();
         assertEquals(2, s.streams().size());
@@ -187,6 +190,33 @@ class ClientTunnelSessionTest {
         assertEquals(0, s.streams().size());
         assertEquals(0, s.registry().size());
         assertFalse(s.isAuthenticated());
+    }
+
+    private static final class FakeListenerController implements ClientListenerController {
+        String host;
+        int port;
+        boolean listening;
+        boolean failApply;
+
+        @Override
+        public void apply(String listenHost, int listenPort) throws IOException {
+            if (failApply) {
+                throw new IOException("bind denied");
+            }
+            this.host = listenHost;
+            this.port = listenPort;
+            this.listening = true;
+        }
+
+        @Override
+        public void clear() {
+            listening = false;
+        }
+
+        @Override
+        public boolean isListening() {
+            return listening;
+        }
     }
 
     private static final class FakeFactory implements ClientStreamFactory {

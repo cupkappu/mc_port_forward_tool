@@ -7,31 +7,19 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Minimal hand-rolled TOML reader/writer for the MVP config files.
  *
- * <p>The transport layer only needs flat key-value pairs and lists of
- * strings. Pulling in a full TOML parser dependency is not justified for
- * MVP. This parser:</p>
- *
- * <ul>
- *   <li>Reads {@code key = value} entries, ignoring blank lines and
- *       {@code #} comments.</li>
- *   <li>Recognises TOML strings ({@code "..."}).</li>
- *   <li>Recognises TOML integers and longs (decimal, with optional
- *       underscores).</li>
- *   <li>Recognises TOML booleans.</li>
- *   <li>Recognises inline arrays of strings and integers.</li>
- *   <li>Rejects duplicate keys.</li>
- *   <li>Throws {@link IllegalStateException} with file path + line number
- *       when parsing fails.</li>
- * </ul>
- *
- * <p>Files are loaded as UTF-8.</p>
+ * <p>Server config supports flat {@code key = value} pairs and repeated
+ * {@code [[routes]]} tables. Client config remains flat for legacy
+ * parser coverage.</p>
  */
 public final class ConfigLoader {
 
@@ -39,33 +27,10 @@ public final class ConfigLoader {
     private static final Pattern INT_VALUE = Pattern.compile("[+-]?[0-9][0-9_]*");
     private static final Pattern KEY_LINE = Pattern.compile(
             "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.*?)\\s*$");
+    private static final Pattern TABLE_HEADER = Pattern.compile(
+            "^\\s*\\[\\[([A-Za-z_][A-Za-z0-9_]*)\\]\\]\\s*$");
 
     private ConfigLoader() {
-    }
-
-    /**
-     * Loads a {@link ClientConfig} from {@code configDir/filename}, copying
-     * {@code bundledResource} into that path when missing.
-     */
-    public static ClientConfig loadClient(Path configDir, String filename, String bundledResource) {
-        Path file = ensureFile(configDir, filename, bundledResource);
-        ParsedToml toml = parseFile(file);
-        try {
-            return new ClientConfig(
-                    toml.bool("enabled"),
-                    toml.string("listen_host"),
-                    (int) toml.longValue("listen_port"),
-                    toml.string("channel_name"),
-                    toml.string("psk"),
-                    (int) toml.longValue("max_streams"),
-                    (int) toml.longValue("stream_buffer_size"),
-                    toml.longValue("global_buffer_size"),
-                    toml.string("log_level")
-            );
-        } catch (IllegalArgumentException e) {
-            throw new IllegalStateException(
-                    "invalid client config " + file + ": " + e.getMessage(), e);
-        }
     }
 
     /**
@@ -75,14 +40,30 @@ public final class ConfigLoader {
     public static ServerConfig loadServer(Path configDir, String filename, String bundledResource) {
         Path file = ensureFile(configDir, filename, bundledResource);
         ParsedToml toml = parseFile(file);
+        return parseServer(toml, file);
+    }
+
+    /** Parses a {@link ParsedToml} into a {@link ServerConfig}. */
+    public static ServerConfig parseServer(ParsedToml toml, Path sourceFile) {
         try {
+            toml.requireOnlyRootKeys(List.of(
+                    "enabled",
+                    "channel_name",
+                    "max_streams_per_player",
+                    "stream_buffer_size",
+                    "global_buffer_size_per_player",
+                    "idle_timeout_seconds",
+                    "connect_timeout_seconds",
+                    "log_level"
+            ));
+            List<RouteConfig> routes = new ArrayList<>();
+            for (Map<String, Object> table : toml.tables("routes")) {
+                routes.add(toRouteConfig(table));
+            }
             return new ServerConfig(
                     toml.bool("enabled"),
-                    toml.string("target_host"),
-                    (int) toml.longValue("target_port"),
                     toml.string("channel_name"),
-                    toml.string("psk"),
-                    toml.stringList("allowed_players"),
+                    routes,
                     (int) toml.longValue("max_streams_per_player"),
                     (int) toml.longValue("stream_buffer_size"),
                     toml.longValue("global_buffer_size_per_player"),
@@ -92,8 +73,68 @@ public final class ConfigLoader {
             );
         } catch (IllegalArgumentException e) {
             throw new IllegalStateException(
-                    "invalid server config " + file + ": " + e.getMessage(), e);
+                    "invalid server config " + sourceFile + ": " + e.getMessage(), e);
         }
+    }
+
+    /** Persists a {@link ServerConfig} with canonical formatting. */
+    public static void writeServer(Path configDir, String filename, ServerConfig config) {
+        try {
+            Files.createDirectories(configDir);
+        } catch (IOException e) {
+            throw new IllegalStateException(
+                    "cannot create config directory " + configDir, e);
+        }
+        Path file = configDir.resolve(filename);
+        StringBuilder out = new StringBuilder();
+        out.append("enabled = ").append(config.isEnabled()).append('\n');
+        out.append("channel_name = \"").append(escapeString(config.getChannelName())).append("\"\n");
+        out.append("max_streams_per_player = ").append(config.getMaxStreamsPerPlayer()).append('\n');
+        out.append("stream_buffer_size = ").append(config.getStreamBufferSize()).append('\n');
+        out.append("global_buffer_size_per_player = ")
+                .append(config.getGlobalBufferSizePerPlayer()).append('\n');
+        out.append("idle_timeout_seconds = ").append(config.getIdleTimeoutSeconds()).append('\n');
+        out.append("connect_timeout_seconds = ").append(config.getConnectTimeoutSeconds()).append('\n');
+        out.append("log_level = \"").append(escapeString(config.getLogLevel())).append("\"\n");
+        for (RouteConfig route : config.getRoutes()) {
+            out.append('\n');
+            out.append("[[routes]]\n");
+            out.append("player_uuid = \"").append(route.getPlayerUuid().toString()).append("\"\n");
+            out.append("player_name = \"").append(escapeString(route.getPlayerName())).append("\"\n");
+            out.append("listen_port = ").append(route.getListenPort()).append('\n');
+            out.append("target_host = \"").append(escapeString(route.getTargetHost())).append("\"\n");
+            out.append("target_port = ").append(route.getTargetPort()).append('\n');
+        }
+        try {
+            Files.writeString(file, out.toString(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot write config file " + file, e);
+        }
+    }
+
+    private static RouteConfig toRouteConfig(Map<String, Object> table) {
+        String uuidStr = (String) table.get("player_uuid");
+        String name = (String) table.get("player_name");
+        long listenPort = ((Number) table.get("listen_port")).longValue();
+        String targetHost = (String) table.get("target_host");
+        long targetPort = ((Number) table.get("target_port")).longValue();
+        if (uuidStr == null) {
+            throw new IllegalArgumentException("route missing player_uuid");
+        }
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(uuidStr);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("invalid route player_uuid: " + uuidStr, e);
+        }
+        return new RouteConfig(uuid, name, (int) listenPort, targetHost, (int) targetPort);
+    }
+
+    private static String escapeString(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private static Path ensureFile(Path configDir, String filename, String bundledResource) {
@@ -130,10 +171,24 @@ public final class ConfigLoader {
         }
         ParsedToml toml = new ParsedToml();
         int lineNo = 0;
+        String currentTable = null;
+        Map<String, Object> currentEntry = null;
         for (String raw : lines) {
             lineNo++;
             String line = raw.trim();
             if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
+            Matcher table = TABLE_HEADER.matcher(raw);
+            if (table.matches()) {
+                String name = table.group(1);
+                if (!"routes".equals(name)) {
+                    throw new IllegalStateException(
+                            file + ":" + lineNo + ": unsupported table [[" + name + "]]");
+                }
+                currentTable = name;
+                currentEntry = new LinkedHashMap<>();
+                toml.addTable(name, currentEntry);
                 continue;
             }
             Matcher m = KEY_LINE.matcher(raw);
@@ -143,11 +198,19 @@ public final class ConfigLoader {
             }
             String key = m.group(1);
             String rhs = m.group(2);
-            if (toml.contains(key)) {
-                throw new IllegalStateException(
-                        file + ":" + lineNo + ": duplicate key '" + key + "'");
+            if (currentEntry != null) {
+                if (currentEntry.containsKey(key)) {
+                    throw new IllegalStateException(
+                            file + ":" + lineNo + ": duplicate key '" + key + "' in table");
+                }
+                currentEntry.put(key, ParsedToml.parseScalarValue(rhs, file, lineNo));
+            } else {
+                if (toml.contains(key)) {
+                    throw new IllegalStateException(
+                            file + ":" + lineNo + ": duplicate key '" + key + "'");
+                }
+                toml.put(key, rhs, file, lineNo);
             }
-            toml.put(key, rhs, file, lineNo);
         }
         return toml;
     }
@@ -167,8 +230,9 @@ public final class ConfigLoader {
     }
 
     /** Internal storage of parsed values. */
-    static final class ParsedToml {
-        private final java.util.LinkedHashMap<String, Object> values = new java.util.LinkedHashMap<>();
+    public static final class ParsedToml {
+        private final Map<String, Object> values = new LinkedHashMap<>();
+        private final List<Map<String, Object>> routes = new ArrayList<>();
 
         boolean contains(String key) {
             return values.containsKey(key);
@@ -177,18 +241,29 @@ public final class ConfigLoader {
         void put(String key, String rhs, Path file, int lineNo) {
             if (rhs.startsWith("[") && rhs.endsWith("]")) {
                 values.put(key, parseArray(rhs, file, lineNo));
-            } else if (rhs.startsWith("\"")) {
-                values.put(key, unquote(rhs, file, lineNo));
-            } else if (rhs.equals("true") || rhs.equals("false")) {
-                values.put(key, Boolean.parseBoolean(rhs));
             } else {
-                Matcher m = INT_VALUE.matcher(rhs);
-                if (m.matches()) {
-                    String digits = rhs.replace("_", "");
-                    values.put(key, Long.parseLong(digits));
-                } else {
-                    throw new IllegalStateException(
-                            file + ":" + lineNo + ": unsupported value: " + rhs);
+                values.put(key, parseScalarValue(rhs, file, lineNo));
+            }
+        }
+
+        void addTable(String name, Map<String, Object> entry) {
+            if (!"routes".equals(name)) {
+                return;
+            }
+            routes.add(entry);
+        }
+
+        public List<Map<String, Object>> tables(String name) {
+            if (!"routes".equals(name)) {
+                return List.of();
+            }
+            return routes;
+        }
+
+        void requireOnlyRootKeys(List<String> allowed) {
+            for (String key : values.keySet()) {
+                if (!allowed.contains(key)) {
+                    throw new IllegalStateException("unsupported server config key '" + key + "'");
                 }
             }
         }
@@ -225,7 +300,7 @@ public final class ConfigLoader {
                     continue;
                 }
                 if (c == ',') {
-                    out.add(parseScalar(cur.toString().trim(), file, lineNo));
+                out.add(parseArrayScalar(cur.toString().trim(), file, lineNo));
                     cur.setLength(0);
                     i++;
                     continue;
@@ -235,24 +310,36 @@ public final class ConfigLoader {
             }
             String tail = cur.toString().trim();
             if (!tail.isEmpty()) {
-                out.add(parseScalar(tail, file, lineNo));
+                out.add(parseArrayScalar(tail, file, lineNo));
             }
             return out;
         }
 
-        private Object parseScalar(String token, Path file, int lineNo) {
+        static Object parseScalarValue(String token, Path file, int lineNo) {
             if (token.startsWith("\"")) {
                 return unquote(token, file, lineNo);
+            }
+            if (token.equals("true") || token.equals("false")) {
+                return Boolean.parseBoolean(token);
             }
             Matcher m = INT_VALUE.matcher(token);
             if (m.matches()) {
                 return Long.parseLong(token.replace("_", ""));
             }
             throw new IllegalStateException(
-                    file + ":" + lineNo + ": unsupported array element: " + token);
+                    file + ":" + lineNo + ": unsupported value: " + token);
         }
 
-        String string(String key) {
+        private Object parseArrayScalar(String token, Path file, int lineNo) {
+            try {
+                return parseScalarValue(token, file, lineNo);
+            } catch (IllegalStateException e) {
+                throw new IllegalStateException(
+                        file + ":" + lineNo + ": unsupported array element: " + token, e);
+            }
+        }
+
+        public String string(String key) {
             Object v = values.get(key);
             if (!(v instanceof String s)) {
                 throw new IllegalStateException("config key '" + key + "' is not a string");
@@ -260,7 +347,7 @@ public final class ConfigLoader {
             return s;
         }
 
-        long longValue(String key) {
+        public long longValue(String key) {
             Object v = values.get(key);
             if (v instanceof Long l) {
                 return l;
@@ -268,7 +355,7 @@ public final class ConfigLoader {
             throw new IllegalStateException("config key '" + key + "' is not an integer");
         }
 
-        boolean bool(String key) {
+        public boolean bool(String key) {
             Object v = values.get(key);
             if (v instanceof Boolean b) {
                 return b;
@@ -276,7 +363,7 @@ public final class ConfigLoader {
             throw new IllegalStateException("config key '" + key + "' is not a boolean");
         }
 
-        List<String> stringList(String key) {
+        public List<String> stringList(String key) {
             Object v = values.get(key);
             if (!(v instanceof List<?> list)) {
                 throw new IllegalStateException("config key '" + key + "' is not an array");

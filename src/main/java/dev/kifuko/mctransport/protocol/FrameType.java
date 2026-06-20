@@ -3,7 +3,9 @@ package dev.kifuko.mctransport.protocol;
 /**
  * Frame types used by the MC Transport Dialer internal protocol.
  *
- * <p>Numeric IDs are stable and start at 1. Wire encoding is big-endian.</p>
+ * <p>Numeric IDs are stable and start at 1. Wire encoding is
+ * big-endian. The MVP adds three route-control frames on top of the
+ * legacy stream frames.</p>
  */
 public enum FrameType {
     AUTH(1),
@@ -14,7 +16,10 @@ public enum FrameType {
     RESET(6),
     PING(7),
     PONG(8),
-    ERROR(9);
+    ERROR(9),
+    CONFIG_APPLY(10),
+    CONFIG_CLEAR(11),
+    CONFIG_ACK(12);
 
     private final int id;
 

@@ -5,7 +5,6 @@ import dev.kifuko.mctransport.config.ConfigLoader;
 import dev.kifuko.mctransport.config.ServerConfig;
 import dev.kifuko.mctransport.net.TransportExecutors;
 import dev.kifuko.mctransport.protocol.FrameCodec;
-import dev.kifuko.mctransport.protocol.SecureFrameCodec;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.util.Identifier;
@@ -29,20 +28,35 @@ public final class McTransportServer implements DedicatedServerModInitializer {
                 return;
             }
             TransportExecutors executors = new TransportExecutors(McTransport.MOD_ID);
-            FrameCodec codec = new FrameCodec(
-                    SecureFrameCodec.encryptedPayloadLimit(config.getStreamBufferSize()));
+            FrameCodec codec = new FrameCodec(config.getStreamBufferSize());
             String[] parts = config.getChannelName().split(":");
             Identifier channelId = Identifier.of(parts[0], parts[1]);
+
+            RouteStore routeStore = new RouteStore(
+                    FabricLoader.getInstance().getConfigDir(), CONFIG_FILE, config);
+
             FabricServerTunnelBridge bridge = new FabricServerTunnelBridge(channelId, codec, config,
+                    routeStore,
                     new FabricServerTunnelBridge.TunnelExecutorsAdapter() {
                         @Override public java.util.concurrent.ExecutorService io() {
                             return executors.io();
                         }
                     });
             bridge.start();
-            McTransport.LOGGER.info("server tunnel bridge registered on channel {}; target {}:{}",
-                    config.getChannelName(),
-                    config.getTargetHost(), config.getTargetPort());
+
+            RouteCommandService commandService = new RouteCommandService(routeStore,
+                    new RouteCommandService.OnlineRouteApplier() {
+                        @Override public void apply(java.util.UUID uuid) {
+                            bridge.applyRouteIfOnline(uuid);
+                        }
+                        @Override public void clear(java.util.UUID uuid) {
+                            bridge.clearRouteIfOnline(uuid);
+                        }
+                    });
+
+            McTransportCommands.register(commandService);
+            McTransport.LOGGER.info("server tunnel bridge registered on channel {}; {} routes configured",
+                    config.getChannelName(), routeStore.routes().size());
         } catch (RuntimeException e) {
             McTransport.LOGGER.error("server init failed", e);
         }

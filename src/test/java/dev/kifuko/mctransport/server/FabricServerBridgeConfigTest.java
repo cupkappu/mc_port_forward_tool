@@ -1,13 +1,14 @@
 package dev.kifuko.mctransport.server;
 
+import dev.kifuko.mctransport.config.RouteConfig;
 import dev.kifuko.mctransport.config.ServerConfig;
 import dev.kifuko.mctransport.protocol.FrameCodec;
-import dev.kifuko.mctransport.protocol.SecureFrameCodec;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -19,19 +20,20 @@ class FabricServerBridgeConfigTest {
 
     @Test
     void createdSessionUsesLoadedServerConfig() {
-        ServerConfig config = new ServerConfig(true, "10.0.0.25", 19000,
-                "mctransport:main", "not-default",
-                List.of(UUID.randomUUID().toString()), 3, 2048, 4096,
+        UUID uuid = UUID.randomUUID();
+        RouteConfig route = new RouteConfig(uuid, "Steve", 25580,
+                "10.0.0.25", 19000);
+        ServerConfig config = new ServerConfig(true, "mctransport:main",
+                List.of(route), 3, 2048, 4096,
                 123, 7, "debug");
         TestBridge bridge = new TestBridge(config);
 
         PlayerTunnelSession session = bridge.newSessionForTest(new Object());
 
-        assertEquals("10.0.0.25", session.config().getTargetHost());
-        assertEquals(19000, session.config().getTargetPort());
-        assertEquals("not-default", session.config().getPsk());
+        assertEquals(route, session.config().routeFor(uuid));
         assertEquals(3, session.config().getMaxStreamsPerPlayer());
         assertEquals(7, session.config().getConnectTimeoutSeconds());
+        assertEquals(route, session.routeStore().routeFor(uuid));
     }
 
     @Test
@@ -47,9 +49,10 @@ class FabricServerBridgeConfigTest {
     private static final class TestBridge extends FabricServerTunnelBridge {
         private TestBridge(ServerConfig config) {
             super(Identifier.of("mctransport", "main"),
-                    new FrameCodec(SecureFrameCodec.encryptedPayloadLimit(
-                            config.getStreamBufferSize())),
+                    new FrameCodec(config.getStreamBufferSize()),
                     config,
+                    new RouteStore(Path.of("build/tmp/test-route-store"),
+                            "mctransport.server.toml", config),
                     new TunnelExecutorsAdapter() {
                         @Override
                         public java.util.concurrent.ExecutorService io() {

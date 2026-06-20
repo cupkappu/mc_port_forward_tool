@@ -51,10 +51,19 @@ chmod +x "${FAKE_BIN}/curl" "${FAKE_BIN}/java"
       1.20.1 \
       "$TEST_REL" \
       00000000-0000-0000-0000-000000000001 \
-      test-psk >/dev/null
+      TestPlayer >/dev/null
 )
 
 test -f "${ROOT_DIR}/${TEST_REL}/fabric-server-launch.jar"
 grep -qx 'server-ip=127.0.0.1' "${ROOT_DIR}/${TEST_REL}/server.properties"
 grep -qx 'server-port=25565' "${ROOT_DIR}/${TEST_REL}/server.properties"
 grep -qx 'online-mode=false' "${ROOT_DIR}/${TEST_REL}/server.properties"
+grep -qx '\[\[routes\]\]' "${ROOT_DIR}/${TEST_REL}/config/mctransport.server.toml"
+grep -qx 'player_uuid = "00000000-0000-0000-0000-000000000001"' \
+  "${ROOT_DIR}/${TEST_REL}/config/mctransport.server.toml"
+grep -qx 'player_name = "TestPlayer"' \
+  "${ROOT_DIR}/${TEST_REL}/config/mctransport.server.toml"
+if find "${ROOT_DIR}/${TEST_REL}" -name mctransport.client.toml | rg .; then
+  echo "prepare_fabric_server.sh must not create a client config" >&2
+  exit 1
+fi

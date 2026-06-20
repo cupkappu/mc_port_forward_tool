@@ -1,18 +1,17 @@
 package dev.kifuko.mctransport.integration;
 
-import dev.kifuko.mctransport.auth.AuthPayload;
 import dev.kifuko.mctransport.buffer.BufferBudget;
 import dev.kifuko.mctransport.buffer.ReservationState;
 import dev.kifuko.mctransport.client.ClientStream;
 import dev.kifuko.mctransport.client.ClientTunnelSession;
-import dev.kifuko.mctransport.config.ClientConfig;
+import dev.kifuko.mctransport.config.RouteConfig;
 import dev.kifuko.mctransport.config.ServerConfig;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.FakeTunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.server.DefaultServerStreamFactory;
 import dev.kifuko.mctransport.server.PlayerTunnelSession;
+import dev.kifuko.mctransport.server.RouteStore;
 import dev.kifuko.mctransport.server.TargetTcpConnector;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 import org.junit.jupiter.api.AfterEach;
@@ -25,8 +24,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -44,16 +43,6 @@ class InMemoryTunnelIntegrationTest {
 
     private static final UUID PLAYER =
             UUID.fromString("11111111-2222-3333-4444-555555555555");
-    private static final String PSK = "shared-secret";
-
-    private static final SecureRandom FIXED = new SecureRandom() {
-        private static final long serialVersionUID = 1L;
-        private int c = 0;
-        @Override public void nextBytes(byte[] b) {
-            for (int i = 0; i < b.length; i++) b[i] = (byte) (c++);
-        }
-    };
-
     private ExecutorService io;
     private FakeTunnelBridge clientBridge;
     private FakeTunnelBridge serverBridge;
@@ -79,10 +68,10 @@ class InMemoryTunnelIntegrationTest {
         acceptor.setDaemon(true);
         acceptor.start();
 
-        ClientConfig clientCfg = new ClientConfig(true, "127.0.0.1", 25580,
-                "mctransport:main", PSK, 16, 4096, 65536L, "info");
-        ServerConfig serverCfg = new ServerConfig(true, "127.0.0.1", echoPort,
-                "mctransport:main", PSK, List.of(PLAYER.toString()),
+        RouteConfig route = new RouteConfig(PLAYER, "Steve", 25580,
+                "127.0.0.1", echoPort);
+        ServerConfig serverCfg = new ServerConfig(true, "mctransport:main",
+                List.of(route),
                 16, 4096, 65536L, 300, 10, "info");
 
         StreamRegistry clientRegistry = new StreamRegistry(16, true);
@@ -92,17 +81,18 @@ class InMemoryTunnelIntegrationTest {
         ReservationState clientRes = new ReservationState();
         ReservationState serverRes = new ReservationState();
 
-        connector = new TargetTcpConnector("127.0.0.1", echoPort, 10, io);
+        connector = new TargetTcpConnector(10, io);
         streamFactory = new DefaultServerStreamFactory(connector, 4096, 4096, io);
 
-        serverSession = new PlayerTunnelSession(serverCfg, serverBridge,
-                new PskCipher(PSK, FIXED), serverRegistry, serverBudget, serverRes,
-                connector, 1_700_000_000L, 0L, streamFactory);
+        serverSession = new PlayerTunnelSession(PLAYER, serverBridge, serverCfg,
+                new RouteStore(Path.of("build/tmp/test-route-store"),
+                        "mctransport.server.toml", serverCfg),
+                serverRegistry, serverBudget, serverRes,
+                connector, 1_700_000_000L, streamFactory);
 
-        clientSession = new ClientTunnelSession(clientCfg, clientBridge,
-                new PskCipher(PSK, FIXED), clientRegistry,
+        clientSession = new ClientTunnelSession(clientBridge, clientRegistry,
                 (sess, id) -> new ClientStream(sess, id, clientBudget, clientRes, 4096),
-                FIXED, 0L);
+                0L);
 
         // Wire receivers only after both sessions exist.
         clientBridge.setReceiver(frame -> clientSession.handleInbound(frame));
@@ -156,11 +146,11 @@ class InMemoryTunnelIntegrationTest {
         }
     }
 
-    private void authenticate() {
+    private void activateRoute() {
         clientBridge.clearSent();
         serverBridge.clearSent();
-        clientSession.sendAuth(PLAYER, 1_700_000_000L);
-        waitFor(() -> clientSession.isAuthenticated() && serverSession.isAuthenticated());
+        serverSession.sendRouteIfConfigured();
+        waitFor(() -> clientSession.isAuthenticated() && serverSession.isRouteActive());
         clientBridge.clearSent();
         serverBridge.clearSent();
     }
@@ -176,7 +166,7 @@ class InMemoryTunnelIntegrationTest {
     @Disabled("Wire-up with FakeTunnelBridge + Frame routing requires additional synchronization; see plan Task 29")
     @Test
     void openTwoConcurrentStreamsAndRoundtripDistinctPayloads() throws Exception {
-        authenticate();
+        activateRoute();
         ClientStream s1 = clientSession.openLocalStream();
         ClientStream s2 = clientSession.openLocalStream();
         int id1 = s1.streamId();
@@ -203,7 +193,7 @@ class InMemoryTunnelIntegrationTest {
 
     @Test
     void unknownStreamOnClientSendsReset() {
-        authenticate();
+        activateRoute();
         clientBridge.clearSent();
         Frame ghost = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
                 0, 9999, FrameType.DATA, (byte) 0, "x".getBytes());
@@ -215,7 +205,7 @@ class InMemoryTunnelIntegrationTest {
 
     @Test
     void unknownStreamOnServerSendsReset() {
-        authenticate();
+        activateRoute();
         serverBridge.clearSent();
         Frame ghost = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
                 0, 9999, FrameType.DATA, (byte) 0, "x".getBytes());
@@ -226,25 +216,23 @@ class InMemoryTunnelIntegrationTest {
 
     @Test
     void maxStreamsPerPlayerEnforced() throws Exception {
-        ServerConfig small = new ServerConfig(true, "127.0.0.1", echoPort,
-                "mctransport:main", PSK, List.of(PLAYER.toString()),
+        RouteConfig route = new RouteConfig(PLAYER, "Steve", 25580,
+                "127.0.0.1", echoPort);
+        ServerConfig small = new ServerConfig(true, "mctransport:main", List.of(route),
                 1, 4096, 65536L, 300, 10, "info");
         StreamRegistry sr = new StreamRegistry(1, false);
         FakeTunnelBridge directBridge = new FakeTunnelBridge();
         directBridge.setReceiver(frame -> { });
-        PlayerTunnelSession ps = new PlayerTunnelSession(small, directBridge,
-                new PskCipher(PSK, FIXED), sr,
+        PlayerTunnelSession ps = new PlayerTunnelSession(PLAYER, directBridge, small,
+                new RouteStore(Path.of("build/tmp/test-route-store"),
+                        "mctransport.server.toml", small),
+                sr,
                 new BufferBudget(4096, 65536L), new ReservationState(),
-                connector, 1_700_000_000L, 0L, streamFactory);
-        // Force auth on the direct session.
-        Frame auth = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION, 0, 0,
-                FrameType.AUTH, (byte) 0,
-                new PskCipher(PSK, FIXED).encrypt(Frame.createTrusted(
-                        PlayerTunnelSession.PROTOCOL_VERSION, 0, 0,
-                        FrameType.AUTH, (byte) 0,
-                        AuthPayload.encode(PlayerTunnelSession.PROTOCOL_VERSION,
-                                PLAYER, "n".getBytes(), 1_700_000_000L))));
-        ps.handleInbound(auth);
+                connector, 1_700_000_000L, streamFactory);
+        ps.sendRouteIfConfigured();
+        ps.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION, 0, 0,
+                FrameType.CONFIG_ACK, (byte) 0,
+                dev.kifuko.mctransport.protocol.RouteControlPayload.encodeAck(true, "ok")));
 
         ps.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
                 0, 1, FrameType.OPEN, (byte) 0, new byte[0]));

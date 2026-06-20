@@ -80,19 +80,21 @@ external tools. The Minecraft mod only carries bytes.
 
 ## Configuration
 
-Two TOML files are created on first launch:
+The client has no TOML configuration. It waits until the server pushes a route,
+then opens the local loopback listener requested by that server.
 
-- `config/mctransport.client.toml` (client mod)
-- `config/mctransport.server.toml` (server mod)
+The dedicated server owns `config/mctransport.server.toml`. Operators configure
+one route per player with commands:
 
-Both must agree on `channel_name` and `psk`. The server config additionally
-requires a non-empty `allowed_players` list.
+```
+/mctransport set <playerName> <listenPort> <targetHost> <targetPort>
+/mctransport unset <playerName>
+/mctransport list
+```
 
-## PSK Warning
-
-The default PSK in both example files is the literal string `change-me`. Do
-**not** deploy with that value. Generate a long random string, e.g.
-`openssl rand -hex 32`, and put it in both files.
+Routes are persisted by player UUID. `set` and `unset` apply immediately for an
+online player. Direct edits to `mctransport.server.toml` are not hot-loaded in
+this MVP; restart the server or use commands.
 
 ## Build
 

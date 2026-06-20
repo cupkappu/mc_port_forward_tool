@@ -1,19 +1,17 @@
 package dev.kifuko.mctransport.integration;
 
-import dev.kifuko.mctransport.auth.AuthPayload;
 import dev.kifuko.mctransport.buffer.BufferBudget;
 import dev.kifuko.mctransport.buffer.ReservationState;
 import dev.kifuko.mctransport.client.ClientStream;
 import dev.kifuko.mctransport.client.ClientTunnelSession;
-import dev.kifuko.mctransport.config.ClientConfig;
+import dev.kifuko.mctransport.config.RouteConfig;
 import dev.kifuko.mctransport.config.ServerConfig;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.FakeTunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.server.DefaultServerStreamFactory;
 import dev.kifuko.mctransport.server.PlayerTunnelSession;
-import dev.kifuko.mctransport.server.ServerStreamReader;
+import dev.kifuko.mctransport.server.RouteStore;
 import dev.kifuko.mctransport.server.TargetTcpConnector;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 import org.junit.jupiter.api.AfterEach;
@@ -27,11 +25,10 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,16 +45,6 @@ class LoopbackTcpTransportTest {
 
     private static final UUID PLAYER =
             UUID.fromString("11111111-2222-3333-4444-555555555555");
-    private static final String PSK = "shared-secret";
-
-    private static final SecureRandom FIXED = new SecureRandom() {
-        private static final long serialVersionUID = 1L;
-        private int c = 0;
-        @Override public void nextBytes(byte[] b) {
-            for (int i = 0; i < b.length; i++) b[i] = (byte) (c++);
-        }
-    };
-
     private ExecutorService io;
     private FakeTunnelBridge clientBridge;
     private FakeTunnelBridge serverBridge;
@@ -80,10 +67,10 @@ class LoopbackTcpTransportTest {
         t.setDaemon(true);
         t.start();
 
-        ClientConfig clientCfg = new ClientConfig(true, "127.0.0.1", 25580,
-                "mctransport:main", PSK, 16, 4096, 65536L, "info");
-        ServerConfig serverCfg = new ServerConfig(true, "127.0.0.1", echoPort,
-                "mctransport:main", PSK, List.of(PLAYER.toString()),
+        RouteConfig route = new RouteConfig(PLAYER, "Steve", 25580,
+                "127.0.0.1", echoPort);
+        ServerConfig serverCfg = new ServerConfig(true, "mctransport:main",
+                List.of(route),
                 16, 4096, 65536L, 300, 10, "info");
 
         StreamRegistry clientReg = new StreamRegistry(16, true);
@@ -93,17 +80,18 @@ class LoopbackTcpTransportTest {
         ReservationState clientRes = new ReservationState();
         ReservationState serverRes = new ReservationState();
 
-        connector = new TargetTcpConnector("127.0.0.1", echoPort, 10, io);
+        connector = new TargetTcpConnector(10, io);
         streamFactory = new DefaultServerStreamFactory(connector, 4096, 4096, io);
 
-        serverSession = new PlayerTunnelSession(serverCfg, serverBridge,
-                new PskCipher(PSK, FIXED), serverReg, serverBudget, serverRes,
-                connector, 1_700_000_000L, 0L, streamFactory);
+        serverSession = new PlayerTunnelSession(PLAYER, serverBridge, serverCfg,
+                new RouteStore(Path.of("build/tmp/test-route-store"),
+                        "mctransport.server.toml", serverCfg),
+                serverReg, serverBudget, serverRes,
+                connector, 1_700_000_000L, streamFactory);
 
-        clientSession = new ClientTunnelSession(clientCfg, clientBridge,
-                new PskCipher(PSK, FIXED), clientReg,
+        clientSession = new ClientTunnelSession(clientBridge, clientReg,
                 (sess, id) -> new ClientStream(sess, id, clientBudget, clientRes, 4096),
-                FIXED, 0L);
+                0L);
 
         // Wire receivers after both sessions exist.
         clientBridge.setReceiver(frame -> clientSession.handleInbound(frame));
@@ -156,10 +144,10 @@ class LoopbackTcpTransportTest {
         }
     }
 
-    private void authenticate() {
+    private void activateRoute() {
         clientBridge.clearSent();
         serverBridge.clearSent();
-        clientSession.sendAuth(PLAYER, 1_700_000_000L);
+        serverSession.sendRouteIfConfigured();
         waitFor(() -> clientSession.isAuthenticated());
         clientBridge.clearSent();
         serverBridge.clearSent();
@@ -176,7 +164,7 @@ class LoopbackTcpTransportTest {
     @Disabled("Wire-up with FakeTunnelBridge + Frame routing requires additional synchronization; see plan Task 29")
     @Test
     void bytesRoundtripThroughFakeTunnelToEchoServer() throws Exception {
-        authenticate();
+        activateRoute();
 
         // Open one local-side stream and attach a socket connected to the
         // client bridge's TCP listener stub (we don't have one in this
@@ -210,7 +198,7 @@ class LoopbackTcpTransportTest {
     @Disabled("Wire-up with FakeTunnelBridge + Frame routing requires additional synchronization; see plan Task 29")
     @Test
     void twoConcurrentClientsStreamInParallel() throws Exception {
-        authenticate();
+        activateRoute();
         ClientStream s1 = clientSession.openLocalStream();
         ClientStream s2 = clientSession.openLocalStream();
         int id1 = s1.streamId();

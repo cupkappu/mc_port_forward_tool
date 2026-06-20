@@ -1,17 +1,17 @@
 package dev.kifuko.mctransport.client;
 
 import dev.kifuko.mctransport.McTransport;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.SerialExecutor;
 import dev.kifuko.mctransport.net.TunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameCodec;
-import dev.kifuko.mctransport.protocol.FrameType;
-import dev.kifuko.mctransport.protocol.SecureFrameCodec;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
+
+import java.util.ArrayDeque;
+import java.util.Queue;
 
 /**
  * Client-side Fabric 1.20.1 bridge using raw custom payload channels.
@@ -20,18 +20,16 @@ public final class FabricClientTunnelBridge implements TunnelBridge {
 
     private final Identifier channel;
     private final FrameCodec codec;
-    private final SecureFrameCodec secureCodec;
     private final TunnelExecutorsAdapter executors;
     private final SerialExecutor inboundDispatcher;
+    private final Queue<Frame> pendingOutbound = new ArrayDeque<>();
     private Receiver receiver;
     private boolean closed;
 
     public FabricClientTunnelBridge(Identifier channel, FrameCodec codec,
-                                    PskCipher cipher, int maxPlainPayloadSize,
                                     TunnelExecutorsAdapter executors) {
         this.channel = channel;
         this.codec = codec;
-        this.secureCodec = new SecureFrameCodec(cipher, maxPlainPayloadSize);
         this.executors = executors;
         this.inboundDispatcher = new SerialExecutor(executors.io());
     }
@@ -43,8 +41,7 @@ public final class FabricClientTunnelBridge implements TunnelBridge {
                     byte[] bytes = readAll(buf);
                     inboundDispatcher.execute(() -> {
                         try {
-                            Frame wireFrame = codec.decode(bytes);
-                            Frame frame = secureCodec.decryptFromWire(wireFrame);
+                            Frame frame = codec.decode(bytes);
                             Receiver r;
                             synchronized (FabricClientTunnelBridge.this) {
                                 r = receiver;
@@ -65,8 +62,27 @@ public final class FabricClientTunnelBridge implements TunnelBridge {
         if (closed) {
             throw new IllegalStateException("bridge is closed");
         }
-        Frame wireFrame = frame.type() == FrameType.AUTH ? frame : secureCodec.encryptForWire(frame);
-        byte[] encoded = codec.encode(wireFrame);
+        if (!ClientPlayNetworking.canSend(channel)) {
+            pendingOutbound.add(frame);
+            McTransport.LOGGER.info("queued outbound tunnel frame {} until client play channel is ready",
+                    frame.type());
+            return;
+        }
+        flushPending();
+        sendNow(frame);
+    }
+
+    public synchronized void flushPending() {
+        if (closed || !ClientPlayNetworking.canSend(channel)) {
+            return;
+        }
+        while (!pendingOutbound.isEmpty()) {
+            sendNow(pendingOutbound.remove());
+        }
+    }
+
+    private void sendNow(Frame frame) {
+        byte[] encoded = codec.encode(frame);
         PacketByteBuf buf = PacketByteBufs.create();
         buf.writeBytes(encoded);
         ClientPlayNetworking.send(channel, buf);

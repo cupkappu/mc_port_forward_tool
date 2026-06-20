@@ -2,13 +2,13 @@
 set -euo pipefail
 
 if [[ $# -lt 3 ]]; then
-  echo "usage: $0 <minecraft-version> <player-uuid> <psk>" >&2
+  echo "usage: $0 <minecraft-version> <player-uuid> <player-name>" >&2
   exit 2
 fi
 
 VERSION="$1"
 PLAYER_UUID="$2"
-PSK="$3"
+PLAYER_NAME="$3"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SERVER_DIR="${ROOT_DIR}/run/e2e-server-${VERSION}"
 RESULT_DIR="${ROOT_DIR}/docs/e2e-results"
@@ -29,7 +29,7 @@ esac
 
 mkdir -p "$RESULT_DIR"
 
-"${ROOT_DIR}/scripts/e2e/prepare_fabric_server.sh" "$VERSION" "$SERVER_DIR" "$PLAYER_UUID" "$PSK"
+"${ROOT_DIR}/scripts/e2e/prepare_fabric_server.sh" "$VERSION" "$SERVER_DIR" "$PLAYER_UUID" "$PLAYER_NAME"
 
 echo "Starting echo target on 127.0.0.1:10000"
 "${ROOT_DIR}/scripts/e2e/echo_server.py" --host 127.0.0.1 --port 10000 \
@@ -73,10 +73,9 @@ Now launch a real Fabric ${VERSION} client with:
 - Fabric Loader 0.19.3
 - matching Fabric API
 - build/libs/mc-transport-dialer-${VERSION}-0.1.0.jar
-- config from run/e2e-client-${VERSION}/config/mctransport.client.toml
 
 Join 127.0.0.1:25565. This script will wait for the client local listener
-127.0.0.1:25580, then run TCP probes.
+127.0.0.1:25580 after the server pushes the route, then run TCP probes.
 EOF
 
 python3 - <<'PY'

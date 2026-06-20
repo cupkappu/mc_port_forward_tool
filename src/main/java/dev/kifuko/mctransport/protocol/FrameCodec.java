@@ -19,7 +19,7 @@ import java.nio.ByteOrder;
  * </pre>
  *
  * <p>The codec does NOT encrypt the payload. Encryption happens in
- * {@link dev.kifuko.mctransport.crypto.PskCipher}; this codec only translates
+ * higher protocol layers; this codec only translates
  * between {@link Frame} values and byte sequences.</p>
  */
 public final class FrameCodec {

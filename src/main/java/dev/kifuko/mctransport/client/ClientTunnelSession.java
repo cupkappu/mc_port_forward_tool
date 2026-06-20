@@ -1,19 +1,16 @@
 package dev.kifuko.mctransport.client;
 
-import dev.kifuko.mctransport.auth.AuthPayload;
-import dev.kifuko.mctransport.config.ClientConfig;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.McTransport;
 import dev.kifuko.mctransport.net.TunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.protocol.ProtocolException;
+import dev.kifuko.mctransport.protocol.RouteControlPayload;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 
-import java.security.SecureRandom;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * One client-side tunnel session: the trusted state machine that mediates
@@ -21,55 +18,58 @@ import java.util.UUID;
  * channel.
  *
  * <p>Frames may not flow until {@link #handleInbound(Frame)} observes
- * {@code AUTH_OK}. Once authenticated, {@link #openLocalStream()} hands out
- * a new client stream and emits an {@code OPEN} frame over the bridge.</p>
+ * {@code CONFIG_APPLY} and the local listener is active. Once the route is
+ * applied, {@link #openLocalStream()} hands out a new client stream and emits
+ * an {@code OPEN} frame over the bridge.</p>
  */
 public final class ClientTunnelSession {
 
     public static final byte PROTOCOL_VERSION = 1;
     public static final int SESSION_ID = 0; // MVP uses a single session id per player.
 
-    private final ClientConfig config;
     private final TunnelBridge bridge;
-    private final PskCipher cipher;
     private final StreamRegistry registry;
     private final ClientStreamFactory streamFactory;
-    private final SecureRandom rng;
+    private final ClientListenerController listenerController;
 
     private final Map<Integer, ClientStream> streams = new HashMap<>();
     private final Object lock = new Object();
-    private boolean authenticated;
+    private boolean routeApplied;
     private volatile long lastInboundMillis;
     private long pingIntervalMillis;
     private long lastPingMillis;
 
-    public ClientTunnelSession(ClientConfig config,
-                               TunnelBridge bridge,
-                               PskCipher cipher,
+    public ClientTunnelSession(TunnelBridge bridge,
                                StreamRegistry registry,
                                ClientStreamFactory streamFactory,
-                               SecureRandom rng,
                                long nowMillis) {
-        this.config = config;
+        this(bridge, registry, streamFactory, nowMillis,
+                new NoopListenerController());
+    }
+
+    public ClientTunnelSession(TunnelBridge bridge,
+                               StreamRegistry registry,
+                               ClientStreamFactory streamFactory,
+                               long nowMillis,
+                               ClientListenerController listenerController) {
         this.bridge = bridge;
-        this.cipher = cipher;
         this.registry = registry;
         this.streamFactory = streamFactory;
-        this.rng = rng;
+        this.listenerController = listenerController;
         this.lastInboundMillis = nowMillis;
         this.lastPingMillis = nowMillis;
     }
 
     public boolean isAuthenticated() {
-        return authenticated;
+        return routeApplied;
+    }
+
+    public boolean isRouteApplied() {
+        return routeApplied;
     }
 
     public StreamRegistry registry() {
         return registry;
-    }
-
-    public ClientConfig config() {
-        return config;
     }
 
     public TunnelBridge bridge() {
@@ -86,18 +86,6 @@ public final class ClientTunnelSession {
         return lastInboundMillis;
     }
 
-    /** Sends the encrypted {@code AUTH} frame. Must be called before auth. */
-    public void sendAuth(UUID playerUuid, long nowSeconds) {
-        byte[] nonce = new byte[16];
-        rng.nextBytes(nonce);
-        byte[] body = AuthPayload.encode(PROTOCOL_VERSION, playerUuid, nonce, nowSeconds);
-        Frame inner = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
-                FrameType.AUTH, (byte) 0, body);
-        Frame outer = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
-                FrameType.AUTH, (byte) 0, cipher.encrypt(inner));
-        bridge.send(outer);
-    }
-
     /** Drives the authenticated state machine on inbound frames. */
     public void handleInbound(Frame frame) {
         if (frame == null) {
@@ -105,21 +93,22 @@ public final class ClientTunnelSession {
         }
         lastInboundMillis = System.currentTimeMillis();
         switch (frame.type()) {
-            case AUTH_OK -> handleAuthOk(frame);
+            case CONFIG_APPLY -> handleConfigApply(frame);
+            case CONFIG_CLEAR -> handleConfigClear();
             case PING -> {
-                requireAuth();
+                requireRoute();
                 sendPong(frame.streamId());
             }
             case PONG -> {
-                requireAuth();
+                requireRoute();
             }
             case OPEN -> {
-                requireAuth();
+                requireRoute();
                 // Server should not OPEN; treat as protocol error.
                 throw new ProtocolException("client received unexpected OPEN");
             }
             case DATA, CLOSE, RESET, ERROR -> {
-                requireAuth();
+                requireRoute();
                 dispatchToStream(frame);
             }
             case AUTH -> throw new ProtocolException("client received unexpected AUTH");
@@ -127,20 +116,37 @@ public final class ClientTunnelSession {
         }
     }
 
-    private void handleAuthOk(Frame frame) {
-        if (authenticated) {
-            return;
+    private void handleConfigApply(Frame frame) {
+        RouteControlPayload.Apply apply = RouteControlPayload.decodeApply(frame.payload());
+        try {
+            listenerController.apply(apply.listenHost(), apply.listenPort());
+            routeApplied = true;
+            sendConfigAck(true, "listening on " + apply.listenHost() + ":" + apply.listenPort());
+            McTransport.LOGGER.info("server route applied; listening on {}:{}",
+                    apply.listenHost(), apply.listenPort());
+        } catch (IOException | RuntimeException e) {
+            routeApplied = false;
+            sendConfigAck(false, "failed to bind "
+                    + apply.listenHost() + ":" + apply.listenPort() + ": " + e.getMessage());
+            McTransport.LOGGER.warn("failed to apply server route {}:{}: {}",
+                    apply.listenHost(), apply.listenPort(), e.getMessage());
         }
-        authenticated = true;
-        McTransport.LOGGER.info("client tunnel authenticated");
-        // Wake any pending stream opens.
+    }
+
+    private void handleConfigClear() {
+        listenerController.clear();
+        closeStreams();
+        registry.clear();
+        routeApplied = false;
+        sendConfigAck(true, "route cleared");
+        McTransport.LOGGER.info("server route cleared");
     }
 
     /** Allocates a new client stream and sends an OPEN frame. */
     public ClientStream openLocalStream() {
         synchronized (lock) {
-            if (!authenticated) {
-                throw new IllegalStateException("cannot open local stream before AUTH_OK");
+            if (!routeApplied || !listenerController.isListening()) {
+                throw new IllegalStateException("cannot open local stream before CONFIG_APPLY");
             }
             int id = registry.allocateClient();
             registry.setState(id, dev.kifuko.mctransport.stream.StreamState.OPEN_SENT);
@@ -165,7 +171,7 @@ public final class ClientTunnelSession {
 
     /** Periodically sends PING while authenticated. */
     public void tick(long nowMillis) {
-        if (!authenticated) {
+        if (!routeApplied) {
             return;
         }
         if (nowMillis - lastPingMillis >= pingIntervalMillis) {
@@ -205,21 +211,52 @@ public final class ClientTunnelSession {
         stream.onFrame(frame);
     }
 
-    private void requireAuth() {
-        if (!authenticated) {
-            throw new ProtocolException("frame received before AUTH_OK");
+    private void requireRoute() {
+        if (!routeApplied) {
+            throw new ProtocolException("frame received before CONFIG_APPLY");
         }
     }
 
     /** Idempotent full close. */
     public void close() {
-        authenticated = false;
+        routeApplied = false;
+        listenerController.clear();
+        closeStreams();
+        registry.clear();
+    }
+
+    private void sendConfigAck(boolean ok, String message) {
+        Frame ack = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
+                FrameType.CONFIG_ACK, (byte) 0,
+                RouteControlPayload.encodeAck(ok, message));
+        bridge.send(ack);
+    }
+
+    private void closeStreams() {
         synchronized (lock) {
             for (ClientStream s : new java.util.ArrayList<>(streams.values())) {
                 s.closeSocketAndRelease();
             }
             streams.clear();
         }
-        registry.clear();
+    }
+
+    private static final class NoopListenerController implements ClientListenerController {
+        private boolean listening;
+
+        @Override
+        public void apply(String listenHost, int listenPort) {
+            listening = true;
+        }
+
+        @Override
+        public void clear() {
+            listening = false;
+        }
+
+        @Override
+        public boolean isListening() {
+            return listening;
+        }
     }
 }

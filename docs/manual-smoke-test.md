@@ -14,7 +14,7 @@ Run it separately for Minecraft `1.20.1` and `1.21.1`.
   - `0.92.9+1.20.1` for Minecraft `1.20.1`
   - `0.116.12+1.21.1` for Minecraft `1.21.1`
 - Java 17 for `1.20.1`; Java 21 for `1.21.1`.
-- The test player's UUID.
+- The test player's UUID and player name.
 
 ## Build Matrix
 
@@ -30,15 +30,15 @@ The mod jars are:
 ## Server Setup
 
 ```
-scripts/e2e/prepare_fabric_server.sh 1.20.1 run/e2e-server-1.20.1 <player-uuid> <shared-psk>
-scripts/e2e/prepare_fabric_server.sh 1.21.1 run/e2e-server-1.21.1 <player-uuid> <shared-psk>
+scripts/e2e/prepare_fabric_server.sh 1.20.1 run/e2e-server-1.20.1 <player-uuid> <player-name>
+scripts/e2e/prepare_fabric_server.sh 1.21.1 run/e2e-server-1.21.1 <player-uuid> <player-name>
 ```
 
 For a guided real E2E run, use:
 
 ```
-scripts/e2e/run_real_e2e.sh 1.20.1 <player-uuid> <shared-psk>
-scripts/e2e/run_real_e2e.sh 1.21.1 <player-uuid> <shared-psk>
+scripts/e2e/run_real_e2e.sh 1.20.1 <player-uuid> <player-name>
+scripts/e2e/run_real_e2e.sh 1.21.1 <player-uuid> <player-name>
 ```
 
 The script starts the server and echo target, waits for the real client local
@@ -74,17 +74,13 @@ cd run/e2e-server-1.21.1
 Install the matching Minecraft version, Fabric Loader, Fabric API, and matching
 `mc-transport-dialer-<version>-0.1.0.jar` into the client `mods/` directory.
 
-Write the client config with the same PSK:
-
-```
-scripts/e2e/write_configs.sh run/e2e-server-1.20.1/config <client-config-dir> <player-uuid> <shared-psk>
-```
-
-Then launch the real Fabric client and join the real Fabric server.
+The client has no config file. Launch the real Fabric client with the matching
+mod jar and join the real Fabric server. The server will push the route for the
+configured player after join.
 
 ## Probe
 
-After the client joins and the log shows `local listener bound to 127.0.0.1:25580`,
+After the client joins and the log shows `server route applied; listening on 127.0.0.1:25580`,
 run:
 
 ```
@@ -95,6 +91,8 @@ scripts/e2e/tcp_probe.py --host 127.0.0.1 --port 25580 --connections 4 --bytes 1
 ## Pass Criteria
 
 - Server log contains `player <uuid> joined; tunnel session ready`.
-- Client log contains `client joined; sending AUTH for <uuid>`.
+- Client log contains `client joined; waiting for server route config`.
+- Client log contains `server route applied; listening on 127.0.0.1:25580`.
+- Server log contains `route active for player <uuid> -> 127.0.0.1:10000`.
 - `tcp_probe.py` exits 0 for single and concurrent probes.
 - Disconnecting the client logs `player disconnected; tunnel session torn down`.

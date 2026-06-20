@@ -4,28 +4,19 @@ import dev.kifuko.mctransport.buffer.BufferBudget;
 import dev.kifuko.mctransport.buffer.ReservationState;
 import dev.kifuko.mctransport.client.ClientStream;
 import dev.kifuko.mctransport.client.ClientTunnelSession;
-import dev.kifuko.mctransport.config.ClientConfig;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.FakeTunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import org.junit.jupiter.api.Test;
 
-import java.security.SecureRandom;
+import java.nio.file.Path;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CloseResetSemanticsTest {
-
-    private static final SecureRandom FIXED = new SecureRandom() {
-        private static final long serialVersionUID = 1L;
-        private int c = 0;
-        @Override public void nextBytes(byte[] b) {
-            for (int i = 0; i < b.length; i++) b[i] = (byte) (c++);
-        }
-    };
 
     @Test
     void clientStreamCloseCleanSendsCloseFrame() {
@@ -71,18 +62,24 @@ class CloseResetSemanticsTest {
         java.net.Socket peer = server.accept();
         BufferBudget budget = new BufferBudget(1024, 8192L);
         ReservationState res = new ReservationState();
+        UUID playerUuid = UUID.fromString("11111111-2222-3333-4444-555555555555");
+        dev.kifuko.mctransport.config.RouteConfig route =
+                new dev.kifuko.mctransport.config.RouteConfig(playerUuid, "Steve",
+                        25580, "127.0.0.1", 10000);
+        dev.kifuko.mctransport.config.ServerConfig serverConfig =
+                new dev.kifuko.mctransport.config.ServerConfig(true, "mctransport:main",
+                        java.util.List.of(route), 8, 1024, 8192L, 300, 10, "info");
         dev.kifuko.mctransport.server.PlayerTunnelSession playerSession =
                 new dev.kifuko.mctransport.server.PlayerTunnelSession(
-                        new dev.kifuko.mctransport.config.ServerConfig(true, "127.0.0.1", 10000,
-                                "mctransport:main", "shared",
-                                java.util.List.of("11111111-2222-3333-4444-555555555555"),
-                                8, 1024, 8192L, 300, 10, "info"),
-                        b, new PskCipher("shared", FIXED),
+                        playerUuid, b, serverConfig,
+                        new dev.kifuko.mctransport.server.RouteStore(
+                                Path.of("build/tmp/test-route-store"),
+                                "mctransport.server.toml", serverConfig),
                         new dev.kifuko.mctransport.stream.StreamRegistry(8, false),
                         budget, res,
-                        new dev.kifuko.mctransport.server.TargetTcpConnector("127.0.0.1", 10000, 10,
+                        new dev.kifuko.mctransport.server.TargetTcpConnector(10,
                                 java.util.concurrent.Executors.newSingleThreadExecutor()),
-                        0L, 0L,
+                        0L,
                         new dev.kifuko.mctransport.server.NoopServerStreamFactoryForTest());
         dev.kifuko.mctransport.server.ServerStream ss = new dev.kifuko.mctransport.server.ServerStream(
                 playerSession, 1, sock, budget, res, (byte) 1, 1024);
@@ -117,11 +114,9 @@ class CloseResetSemanticsTest {
     private ClientTunnelSession newSession(FakeTunnelBridge b,
                                            BufferBudget budget,
                                            ReservationState res) {
-        ClientConfig cfg = new ClientConfig(true, "127.0.0.1", 25580,
-                "mctransport:main", "shared", 8, 1024, 8192L, "info");
-        return new ClientTunnelSession(cfg, b, new PskCipher("shared", FIXED),
+        return new ClientTunnelSession(b,
                 new StreamRegistry(8, true),
                 (sess, id) -> new ClientStream(sess, id, budget, res, 1024),
-                FIXED, 0L);
+                0L);
     }
 }

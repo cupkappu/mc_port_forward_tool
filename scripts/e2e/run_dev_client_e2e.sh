@@ -2,13 +2,12 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "usage: $0 <minecraft-version> [username] [psk]" >&2
+  echo "usage: $0 <minecraft-version> [username]" >&2
   exit 2
 fi
 
 VERSION="$1"
 USERNAME="${2:-E2EPlayer}"
-PSK="${3:-mc-transport-e2e-psk}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SERVER_DIR="${ROOT_DIR}/run/e2e-server-${VERSION}"
 RESULT_FILE="${ROOT_DIR}/docs/e2e-results/${VERSION}.md"
@@ -31,11 +30,7 @@ SERVER_JAVA_BIN="${SERVER_JAVA_HOME}/bin/java"
 GRADLE_JAVA_HOME="${GRADLE_JAVA_HOME:-/opt/homebrew/opt/openjdk@25}"
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.native=false"
 
-mkdir -p "${ROOT_DIR}/run/config"
-
-"${ROOT_DIR}/scripts/e2e/prepare_fabric_server.sh" "$VERSION" "$SERVER_DIR" "$PLAYER_UUID" "$PSK"
-cp "${ROOT_DIR}/run/e2e-client-${VERSION}/config/mctransport.client.toml" \
-  "${ROOT_DIR}/run/config/mctransport.client.toml"
+"${ROOT_DIR}/scripts/e2e/prepare_fabric_server.sh" "$VERSION" "$SERVER_DIR" "$PLAYER_UUID" "$USERNAME"
 
 echo "Starting echo target on 127.0.0.1:10000"
 "${ROOT_DIR}/scripts/e2e/echo_server.py" --host 127.0.0.1 --port 10000 \
@@ -110,28 +105,32 @@ with socket.create_connection(("127.0.0.1", 25580), timeout=1):
     pass
 PY
 
-echo "Waiting for client join/auth handshake log"
+echo "Waiting for server-pushed route handshake log"
 for _ in $(seq 1 300); do
   if rg -q 'player .* joined; tunnel session ready' \
       "${SERVER_DIR}/server-dev-client-e2e.log" 2>/dev/null && \
-      rg -q 'client joined; sending AUTH' \
+      rg -q 'client joined; waiting for server route config' \
       "${SERVER_DIR}/client-dev-e2e.log" 2>/dev/null && \
-      rg -q 'client tunnel authenticated' \
-      "${SERVER_DIR}/client-dev-e2e.log" 2>/dev/null; then
+      rg -q 'server route applied; listening on 127\.0\.0\.1:25580' \
+      "${SERVER_DIR}/client-dev-e2e.log" 2>/dev/null && \
+      rg -q 'route active for player .* -> 127\.0\.0\.1:10000' \
+      "${SERVER_DIR}/server-dev-client-e2e.log" 2>/dev/null; then
     break
   fi
   if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
-    echo "client exited before join/auth; see ${SERVER_DIR}/client-dev-e2e.log" >&2
+    echo "client exited before route handshake; see ${SERVER_DIR}/client-dev-e2e.log" >&2
     exit 1
   fi
   sleep 1
 done
 rg -q 'player .* joined; tunnel session ready' \
   "${SERVER_DIR}/server-dev-client-e2e.log"
-rg -q 'client joined; sending AUTH' \
+rg -q 'client joined; waiting for server route config' \
   "${SERVER_DIR}/client-dev-e2e.log"
-rg -q 'client tunnel authenticated' \
+rg -q 'server route applied; listening on 127\.0\.0\.1:25580' \
   "${SERVER_DIR}/client-dev-e2e.log"
+rg -q 'route active for player .* -> 127\.0\.0\.1:10000' \
+  "${SERVER_DIR}/server-dev-client-e2e.log"
 
 echo "Running TCP probes"
 SINGLE_LOG="${SERVER_DIR}/probe-single.log"

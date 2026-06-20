@@ -1,93 +1,76 @@
 package dev.kifuko.mctransport.server;
 
-import dev.kifuko.mctransport.auth.AuthPayload;
 import dev.kifuko.mctransport.buffer.BufferBudget;
 import dev.kifuko.mctransport.buffer.ReservationState;
+import dev.kifuko.mctransport.config.RouteConfig;
 import dev.kifuko.mctransport.config.ServerConfig;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.TunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.protocol.ProtocolException;
+import dev.kifuko.mctransport.protocol.RouteControlPayload;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 
-import java.util.List;
 import java.util.UUID;
 
 /**
- * Per-player authentication state for the server-side MC Transport Dialer.
+ * Per-player tunnel session for the server-side MC Transport Dialer.
  *
- * <p>A session starts unauthenticated. The server accepts {@code AUTH} only
- * when the player UUID is in {@code allowed_players} and the embedded
- * plaintext payload decrypts cleanly with the configured PSK. Only after
- * {@code AUTH_OK} is sent do further frame types become valid.</p>
+ * <p>The server identifies the player UUID from the Minecraft session
+ * itself (Fabric provides it on the join event). There is no
+ * client-supplied AUTH handshake in the server-pushed route mode. The
+ * session looks up a route for the player's UUID in {@link RouteStore},
+ * pushes {@code CONFIG_APPLY} on join, and dials the route's target once
+ * the client replies with {@code CONFIG_ACK}.</p>
  */
 public final class PlayerTunnelSession {
 
-    /** Wire-protocol version exchanged in the AUTH payload. */
+    /** Wire-protocol version exchanged in control payloads. */
     public static final byte PROTOCOL_VERSION = 1;
 
-    /** Maximum allowed clock skew between client and server in seconds. */
-    public static final long DEFAULT_MAX_CLOCK_SKEW_SECONDS = 60;
+    /** Session id used for every control frame in the MVP. */
+    public static final int SESSION_ID = 0;
 
-    private final ServerConfig config;
+    private final UUID playerUuid;
     private final TunnelBridge bridge;
-    private final PskCipher cipher;
+    private final ServerConfig config;
+    private final RouteStore routeStore;
     private final BufferBudget budget;
     private final ReservationState reservations;
     private final StreamRegistry registry;
     private final TargetTcpConnector connector;
-    private final long maxClockSkewSeconds;
-    private final long nowSecondsSupplier;
     private final long nowMillisSupplier;
-
-    private boolean authenticated;
-    private UUID authenticatedUuid;
-    private volatile long lastInboundMillis;
     private final ServerStreamFactory streamFactory;
 
-    public PlayerTunnelSession(ServerConfig config,
+    private volatile long lastInboundMillis;
+    private volatile boolean routeActive;
+    private volatile RouteConfig activeRoute;
+
+    public PlayerTunnelSession(UUID playerUuid,
                                TunnelBridge bridge,
-                               PskCipher cipher,
+                               ServerConfig config,
+                               RouteStore routeStore,
                                StreamRegistry registry,
                                BufferBudget budget,
                                ReservationState reservations,
                                TargetTcpConnector connector,
-                               long nowSeconds,
                                long nowMillis,
                                ServerStreamFactory streamFactory) {
-        this.config = config;
+        this.playerUuid = playerUuid;
         this.bridge = bridge;
-        this.cipher = cipher;
+        this.config = config;
+        this.routeStore = routeStore;
         this.registry = registry;
         this.budget = budget;
         this.reservations = reservations;
         this.connector = connector;
-        this.maxClockSkewSeconds = DEFAULT_MAX_CLOCK_SKEW_SECONDS;
-        this.nowSecondsSupplier = nowSeconds;
         this.nowMillisSupplier = nowMillis;
         this.lastInboundMillis = nowMillis;
         this.streamFactory = streamFactory;
     }
 
-    public BufferBudget budget() {
-        return budget;
-    }
-
-    public ReservationState reservations() {
-        return reservations;
-    }
-
-    public boolean isAuthenticated() {
-        return authenticated;
-    }
-
-    public UUID authenticatedUuid() {
-        return authenticatedUuid;
-    }
-
-    public StreamRegistry registry() {
-        return registry;
+    public UUID playerUuid() {
+        return playerUuid;
     }
 
     public TunnelBridge bridge() {
@@ -96,6 +79,22 @@ public final class PlayerTunnelSession {
 
     public ServerConfig config() {
         return config;
+    }
+
+    public RouteStore routeStore() {
+        return routeStore;
+    }
+
+    public StreamRegistry registry() {
+        return registry;
+    }
+
+    public BufferBudget budget() {
+        return budget;
+    }
+
+    public ReservationState reservations() {
+        return reservations;
     }
 
     public TargetTcpConnector connector() {
@@ -110,6 +109,35 @@ public final class PlayerTunnelSession {
         return streamFactory;
     }
 
+    public boolean isRouteActive() {
+        return routeActive;
+    }
+
+    public RouteConfig activeRoute() {
+        return activeRoute;
+    }
+
+    /**
+     * Pushes the configured route to the client when one exists.
+     * Called by the Fabric bridge right after the player joins.
+     */
+    public void sendRouteIfConfigured() {
+        RouteConfig route = routeStore.routeFor(playerUuid);
+        if (route == null) {
+            return;
+        }
+        sendConfigApply(route);
+    }
+
+    /** Pushes {@code CONFIG_CLEAR} and tears down any open streams. */
+    public void sendRouteClear() {
+        routeActive = false;
+        activeRoute = null;
+        sendConfigClear();
+        streamFactory.closeAll(this);
+        registry.clear();
+    }
+
     /** Handles an inbound frame from the Minecraft channel. */
     public void handleInbound(Frame frame) {
         if (frame == null) {
@@ -118,91 +146,72 @@ public final class PlayerTunnelSession {
         lastInboundMillis = nowMillisSupplier;
         FrameType type = frame.type();
         switch (type) {
-            case AUTH -> handleAuth(frame);
-            case PING -> {
-                requireAuth();
-                sendPong(frame.streamId());
-            }
-            case PONG -> {
-                requireAuth();
-            }
+            case CONFIG_ACK -> handleConfigAck(frame);
+            case PING -> sendPong(frame.streamId());
+            case PONG -> { /* keep-alive */ }
             case OPEN -> {
-                requireAuth();
+                requireRoute();
                 handleOpen(frame);
             }
             case DATA, CLOSE, RESET, ERROR -> {
-                requireAuth();
+                requireRoute();
                 dispatchToStream(frame);
             }
-            case AUTH_OK -> {
-                // Server must never receive AUTH_OK.
-                throw new ProtocolException("server received unexpected AUTH_OK");
+            case AUTH, AUTH_OK, CONFIG_APPLY, CONFIG_CLEAR -> {
+                throw new ProtocolException(
+                        "server received unexpected frame: " + type);
             }
             default -> throw new ProtocolException("unhandled frame type: " + type);
         }
     }
 
-    private void handleAuth(Frame frame) {
-        if (authenticated) {
-            // Re-auth attempts are ignored.
+    private void handleConfigAck(Frame frame) {
+        RouteControlPayload.Ack ack = RouteControlPayload.decodeAck(frame.payload());
+        if (!ack.ok()) {
+            dev.kifuko.mctransport.McTransport.LOGGER.warn(
+                    "client reported route apply failure: {}",
+                    ack.message());
+            routeActive = false;
+            activeRoute = null;
+            streamFactory.closeAll(this);
+            registry.clear();
             return;
         }
-        byte[] plaintext;
-        try {
-            plaintext = cipher.decrypt(frame, frame.payload());
-        } catch (ProtocolException e) {
-            throw new ProtocolException("AUTH decryption failed", e);
+        if (activeRoute == null) {
+            // Ack for CONFIG_CLEAR or before any apply: no-op.
+            return;
         }
-        AuthPayload.Decoded decoded;
-        try {
-            decoded = AuthPayload.decode(plaintext, PROTOCOL_VERSION,
-                    maxClockSkewSeconds, nowSecondsSupplier);
-        } catch (IllegalArgumentException e) {
-            throw new ProtocolException("invalid AUTH payload: " + e.getMessage(), e);
-        }
-        if (!isAllowed(decoded.playerUuid())) {
-            throw new ProtocolException("player not allowed: " + decoded.playerUuid());
-        }
-        authenticated = true;
-        authenticatedUuid = decoded.playerUuid();
-        sendAuthOk();
+        routeActive = true;
+        dev.kifuko.mctransport.McTransport.LOGGER.info(
+                "route active for player {} -> {}:{}",
+                playerUuid, activeRoute.getTargetHost(), activeRoute.getTargetPort());
     }
 
-    private boolean isAllowed(UUID uuid) {
-        List<String> allowed = config.getAllowedPlayers();
-        for (String entry : allowed) {
-            try {
-                UUID candidate = UUID.fromString(entry);
-                if (candidate.equals(uuid)) {
-                    return true;
-                }
-            } catch (IllegalArgumentException ignored) {
-                // Compare against the raw string form too (dashes optional in some tooling).
-                if (entry.replace("-", "").equalsIgnoreCase(
-                        uuid.toString().replace("-", ""))) {
-                    return true;
-                }
-            }
+    private void requireRoute() {
+        if (!routeActive || activeRoute == null) {
+            throw new ProtocolException(
+                    "frame received before route is active for " + playerUuid);
         }
-        return false;
     }
 
-    private void sendAuthOk() {
-        Frame reply = Frame.createTrusted(PROTOCOL_VERSION, 0, 0,
-                FrameType.AUTH_OK, (byte) 0, new byte[0]);
-        bridge.send(reply);
+    private void sendConfigApply(RouteConfig route) {
+        activeRoute = route;
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
+                FrameType.CONFIG_APPLY, (byte) 0,
+                RouteControlPayload.encodeApply(route.getListenHost(), route.getListenPort()));
+        bridge.send(f);
+    }
+
+    private void sendConfigClear() {
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
+                FrameType.CONFIG_CLEAR, (byte) 0, new byte[0]);
+        bridge.send(f);
     }
 
     private void sendPong(int streamId) {
-        Frame reply = Frame.createTrusted(PROTOCOL_VERSION, 0, streamId,
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
                 FrameType.PONG, (byte) 0, new byte[0]);
-        bridge.send(reply);
-    }
-
-    private void requireAuth() {
-        if (!authenticated) {
-            throw new ProtocolException("frame received before AUTH_OK");
-        }
+        bridge.send(f);
     }
 
     private void handleOpen(Frame frame) {
@@ -215,9 +224,6 @@ public final class PlayerTunnelSession {
             sendError(streamId, "max streams reached");
             return;
         }
-        // ServerStreamFactory.dialAndAttach is expected to synchronously dial
-        // the fixed target, register the stream in the registry on success,
-        // and (on failure) send RESET itself.
         streamFactory.dialAndAttach(this, streamId);
     }
 
@@ -235,22 +241,22 @@ public final class PlayerTunnelSession {
     }
 
     private void sendReset(int streamId) {
-        Frame f = Frame.createTrusted(PROTOCOL_VERSION, 0, streamId,
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
                 FrameType.RESET, (byte) 0, new byte[0]);
         bridge.send(f);
     }
 
     private void sendError(int streamId, String message) {
         byte[] body = message == null ? new byte[0] : message.getBytes();
-        Frame f = Frame.createTrusted(PROTOCOL_VERSION, 0, streamId,
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
                 FrameType.ERROR, (byte) 0, body);
         bridge.send(f);
     }
 
     /** Called when the underlying player disconnects. Idempotent. */
     public void close() {
-        authenticated = false;
-        authenticatedUuid = null;
+        routeActive = false;
+        activeRoute = null;
         streamFactory.closeAll(this);
         registry.clear();
     }

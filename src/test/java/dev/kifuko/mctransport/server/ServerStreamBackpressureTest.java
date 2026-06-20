@@ -2,14 +2,15 @@ package dev.kifuko.mctransport.server;
 
 import dev.kifuko.mctransport.buffer.BufferBudget;
 import dev.kifuko.mctransport.buffer.ReservationState;
+import dev.kifuko.mctransport.config.RouteConfig;
 import dev.kifuko.mctransport.config.ServerConfig;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.FakeTunnelBridge;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.net.Socket;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -27,16 +28,17 @@ class ServerStreamBackpressureTest {
         BufferBudget budget = new BufferBudget(8, 8);
         ReservationState reservations = new ReservationState();
         budget.reserve(99, 8, reservations);
-        ServerConfig config = new ServerConfig(true, "127.0.0.1", 10000,
-                "mctransport:main", "shared",
-                List.of(UUID.randomUUID().toString()), 8, 8, 8,
-                300, 10, "info");
-        PlayerTunnelSession session = new PlayerTunnelSession(config, bridge,
-                new PskCipher("shared"), new StreamRegistry(8, false),
-                budget, reservations,
-                new TargetTcpConnector("127.0.0.1", 10000, 10,
-                        Executors.newSingleThreadExecutor()),
-                1_700_000_000L, 0L,
+        UUID uuid = UUID.randomUUID();
+        RouteConfig route = new RouteConfig(uuid, "Steve", 25580,
+                "127.0.0.1", 10000);
+        ServerConfig config = new ServerConfig(true, "mctransport:main",
+                List.of(route), 8, 8, 8L, 300, 10, "info");
+        PlayerTunnelSession session = new PlayerTunnelSession(uuid, bridge, config,
+                new RouteStore(Path.of("build/tmp/test-route-store"),
+                        "mctransport.server.toml", config),
+                new StreamRegistry(8, false), budget, reservations,
+                new TargetTcpConnector(10, Executors.newSingleThreadExecutor()),
+                1_700_000_000L,
                 new NoopServerStreamFactoryForTest());
         ServerStream stream = new ServerStream(session, 99, new Socket(), budget,
                 reservations, PlayerTunnelSession.PROTOCOL_VERSION, 8);

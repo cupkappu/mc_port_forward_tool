@@ -1,6 +1,5 @@
 package dev.kifuko.mctransport.client;
 
-import dev.kifuko.mctransport.config.ClientConfig;
 import dev.kifuko.mctransport.net.TransportExecutors;
 import org.junit.jupiter.api.Test;
 
@@ -9,7 +8,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.UUID;
 import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -17,21 +15,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LocalTcpListenerTest {
-
-    private static ClientConfig config(int port) {
-        if (port <= 0) {
-            port = 25580; // The test will rebind to an ephemeral port by overriding below.
-        }
-        return new ClientConfig(true, "127.0.0.1", port,
-                "mctransport:main", "shared", 8, 1024, 8192L, "info");
-    }
-
-    /** Build a ClientConfig with the chosen port, valid range. */
-    private static ClientConfig configValidPort(int port) {
-        int p = port <= 0 ? 25580 : port;
-        return new ClientConfig(true, "127.0.0.1", p,
-                "mctransport:main", "shared", 8, 1024, 8192L, "info");
-    }
 
     private static TransportExecutors execs() {
         return new TransportExecutors(
@@ -42,8 +25,8 @@ class LocalTcpListenerTest {
     @Test
     void bindsToConfiguredHostAndPort() throws Exception {
         TransportExecutors execs = execs();
-        ClientConfig cfg = config(0);
-        LocalTcpListener listener = new LocalTcpListener(cfg, execs, () -> null, null);
+        LocalTcpListener listener = new LocalTcpListener("127.0.0.1", 0,
+                execs, () -> null, null);
         listener.start();
         try {
             assertTrue(listener.isRunning());
@@ -62,8 +45,8 @@ class LocalTcpListenerTest {
     @Test
     void refusesNewSocketsWhenNoSessionAvailable() throws Exception {
         TransportExecutors execs = execs();
-        ClientConfig cfg = config(0);
-        LocalTcpListener listener = new LocalTcpListener(cfg, execs, () -> null, null);
+        LocalTcpListener listener = new LocalTcpListener("127.0.0.1", 0,
+                execs, () -> null, null);
         listener.start();
         try {
             int port = listener.boundPort();
@@ -80,19 +63,10 @@ class LocalTcpListenerTest {
     }
 
     @Test
-    void disabledConfigRefusesConnections() throws Exception {
-        TransportExecutors execs = execs();
-        ClientConfig disabled = new ClientConfig(false, "127.0.0.1", 25580,
-                "mctransport:main", "shared", 8, 1024, 8192L, "info");
-        LocalTcpListener listener = new LocalTcpListener(disabled, execs, () -> null, null);
-        assertFalse(listener.isRunning());
-        // We do not start() at all; the disabled case is enforced upstream.
-    }
-
-    @Test
     void stopIsIdempotent() throws Exception {
         TransportExecutors execs = execs();
-        LocalTcpListener listener = new LocalTcpListener(configValidPort(0), execs, () -> null, null);
+        LocalTcpListener listener = new LocalTcpListener("127.0.0.1", 0,
+                execs, () -> null, null);
         listener.start();
         listener.stop();
         listener.stop();
@@ -122,9 +96,9 @@ class LocalTcpListenerTest {
         acceptor.start();
 
         TransportExecutors execs = execs();
-        ClientConfig cfg = configValidPort(0);
         ClientTunnelSessionStubProvider provider = new ClientTunnelSessionStubProvider(target.getLocalPort());
-        LocalTcpListener listener = new LocalTcpListener(cfg, execs, provider, null);
+        LocalTcpListener listener = new LocalTcpListener("127.0.0.1", 0,
+                execs, provider, null);
         listener.start();
         try {
             int port = listener.boundPort();

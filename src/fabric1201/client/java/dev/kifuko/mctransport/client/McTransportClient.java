@@ -1,12 +1,8 @@
 package dev.kifuko.mctransport.client;
 
 import dev.kifuko.mctransport.McTransport;
-import dev.kifuko.mctransport.config.ClientConfig;
-import dev.kifuko.mctransport.config.ConfigLoader;
-import dev.kifuko.mctransport.crypto.PskCipher;
 import dev.kifuko.mctransport.net.TransportExecutors;
 import dev.kifuko.mctransport.protocol.FrameCodec;
-import dev.kifuko.mctransport.protocol.SecureFrameCodec;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -30,12 +26,14 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class McTransportClient implements ClientModInitializer {
 
-    private static final String CONFIG_FILE = "mctransport.client.toml";
-    private static final String CONFIG_RESOURCE = "/mctransport.client.toml";
+    private static final String DEFAULT_CHANNEL = "mctransport:main";
+    private static final int DEFAULT_MAX_STREAMS = 64;
+    private static final int DEFAULT_STREAM_BUFFER_SIZE = 1_048_576;
+    private static final long DEFAULT_GLOBAL_BUFFER_SIZE = 33_554_432L;
     static final int E2E_QUICK_JOIN_READY_TICKS = 40;
 
-    private final AtomicReference<LocalTcpListener> listener = new AtomicReference<>();
     private final AtomicReference<ClientTunnelSession> session = new AtomicReference<>();
+    private final AtomicReference<ClientListenerController> listenerController = new AtomicReference<>();
     private final AtomicBoolean e2eQuickJoinStarted = new AtomicBoolean(false);
     private final AtomicInteger e2eQuickJoinReadyTicks = new AtomicInteger(0);
     private TransportExecutors executors;
@@ -45,23 +43,14 @@ public final class McTransportClient implements ClientModInitializer {
     public void onInitializeClient() {
         McTransport.LOGGER.info("MC Transport Dialer client loaded");
         try {
-            ClientConfig config = ConfigLoader.loadClient(
-                    net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir(),
-                    CONFIG_FILE, CONFIG_RESOURCE);
-            if (!config.isEnabled()) {
-                McTransport.LOGGER.info("client transport is disabled in config");
-                return;
-            }
             executors = new TransportExecutors(McTransport.MOD_ID);
-            FrameCodec codec = new FrameCodec(
-                    SecureFrameCodec.encryptedPayloadLimit(config.getStreamBufferSize()));
-            StreamRegistry registry = new StreamRegistry(config.getMaxStreams(), true);
+            FrameCodec codec = new FrameCodec(DEFAULT_STREAM_BUFFER_SIZE);
+            StreamRegistry registry = new StreamRegistry(DEFAULT_MAX_STREAMS, true);
 
-            String[] parts = config.getChannelName().split(":");
+            String[] parts = DEFAULT_CHANNEL.split(":");
             Identifier channelId = Identifier.of(parts[0], parts[1]);
 
             bridge = new FabricClientTunnelBridge(channelId, codec,
-                    new PskCipher(config.getPsk()), config.getStreamBufferSize(),
                     new FabricClientTunnelBridge.TunnelExecutorsAdapter() {
                         @Override public java.util.concurrent.ExecutorService io() {
                             return executors.io();
@@ -75,51 +64,35 @@ public final class McTransportClient implements ClientModInitializer {
                 }
             });
 
+            ClientListenerController controller = new DynamicLocalTcpListenerController(
+                    executors, () -> session.get(), null);
+            listenerController.set(controller);
             ClientTunnelSession tunnelSession = new ClientTunnelSession(
-                    config, bridge, new PskCipher(config.getPsk()),
+                    bridge,
                     registry,
                     (sess, id) -> new ClientStream(sess, id,
                             new dev.kifuko.mctransport.buffer.BufferBudget(
-                                    config.getStreamBufferSize(), config.getGlobalBufferSize()),
+                                    DEFAULT_STREAM_BUFFER_SIZE, DEFAULT_GLOBAL_BUFFER_SIZE),
                             new dev.kifuko.mctransport.buffer.ReservationState(),
-                            config.getStreamBufferSize()),
-                    new java.security.SecureRandom(),
-                    System.currentTimeMillis());
+                            DEFAULT_STREAM_BUFFER_SIZE),
+                    System.currentTimeMillis(),
+                    controller);
             session.set(tunnelSession);
             tunnelSession.setPingIntervalMillis(15_000L);
 
-            LocalTcpListener l = new LocalTcpListener(config, executors,
-                    () -> session.get(), null);
-            try {
-                l.start();
-            } catch (java.io.IOException e) {
-                McTransport.LOGGER.error("failed to bind local listener on {}:{}",
-                        config.getListenHost(), config.getListenPort(), e);
-                return;
-            }
-            listener.set(l);
-            McTransport.LOGGER.info("local listener bound to {}:{}",
-                    config.getListenHost(), config.getListenPort());
-
             ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-                if (client.player == null) {
-                    McTransport.LOGGER.warn("client joined but player UUID was unavailable; AUTH not sent");
-                    return;
-                }
-                UUID playerUuid = client.player.getUuid();
-                ClientTunnelSession s = session.get();
-                if (s != null) {
-                    McTransport.LOGGER.info("client joined; sending AUTH for {}", playerUuid);
-                    s.sendAuth(playerUuid, System.currentTimeMillis() / 1000L);
+                McTransport.LOGGER.info("client joined; waiting for server route config");
+                if (bridge != null) {
+                    bridge.flushPending();
                 }
             });
             ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
                 McTransport.LOGGER.info("client disconnected; clearing tunnel state");
-                LocalTcpListener activeListener = listener.getAndSet(null);
-                if (activeListener != null) {
-                    activeListener.stop();
+                ClientListenerController activeController = listenerController.get();
+                if (activeController != null) {
+                    activeController.clear();
                 }
-                ClientTunnelSession activeSession = session.getAndSet(null);
+                ClientTunnelSession activeSession = session.get();
                 if (activeSession != null) {
                     activeSession.close();
                 }

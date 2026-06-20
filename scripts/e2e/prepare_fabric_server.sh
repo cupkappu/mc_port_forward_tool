@@ -2,14 +2,14 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-  echo "usage: $0 <minecraft-version> <server-dir> [player-uuid] [psk]" >&2
+  echo "usage: $0 <minecraft-version> <server-dir> [player-uuid] [player-name]" >&2
   exit 2
 fi
 
 VERSION="$1"
 SERVER_DIR="$2"
 PLAYER_UUID="${3:-}"
-PSK="${4:-mc-transport-e2e-psk}"
+PLAYER_NAME="${4:-E2EPlayer}"
 LOADER_VERSION="${LOADER_VERSION:-0.19.3}"
 INSTALLER_VERSION="${INSTALLER_VERSION:-1.1.0}"
 
@@ -68,9 +68,11 @@ cp "$MOD_JAR" "${SERVER_DIR}/mods/"
 if [[ -n "$PLAYER_UUID" ]]; then
   "${ROOT_DIR}/scripts/e2e/write_configs.sh" \
     "${SERVER_DIR}/config" \
-    "${ROOT_DIR}/run/e2e-client-${VERSION}/config" \
     "$PLAYER_UUID" \
-    "$PSK"
+    "$PLAYER_NAME" \
+    25580 \
+    127.0.0.1 \
+    10000
 fi
 
 cat <<EOF
