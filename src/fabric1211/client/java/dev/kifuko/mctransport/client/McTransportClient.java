@@ -1,10 +1,8 @@
 package dev.kifuko.mctransport.client;
 
 import dev.kifuko.mctransport.McTransport;
-import dev.kifuko.mctransport.kcp.KcpConfig;
 import dev.kifuko.mctransport.net.TransportExecutors;
 import dev.kifuko.mctransport.protocol.FrameCodec;
-import dev.kifuko.mctransport.stream.StreamRegistry;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -21,7 +19,6 @@ import java.lang.reflect.Method;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Client-side Fabric entrypoint. Builds the tunnel session and waits for
@@ -35,12 +32,11 @@ public final class McTransportClient implements ClientModInitializer {
     private static final long DEFAULT_GLOBAL_BUFFER_SIZE = 33_554_432L;
     static final int E2E_QUICK_JOIN_READY_TICKS = 40;
 
-    private final AtomicReference<ClientTunnelSession> session = new AtomicReference<>();
-    private final AtomicReference<ClientListenerController> listenerController = new AtomicReference<>();
     private final AtomicBoolean e2eQuickJoinStarted = new AtomicBoolean(false);
     private final AtomicInteger e2eQuickJoinReadyTicks = new AtomicInteger(0);
     private TransportExecutors executors;
     private FabricClientTunnelBridge bridge;
+    private ClientTunnelSessionManager sessionManager;
 
     @Override
     public void onInitializeClient() {
@@ -48,7 +44,6 @@ public final class McTransportClient implements ClientModInitializer {
         try {
             executors = new TransportExecutors(McTransport.MOD_ID);
             FrameCodec codec = new FrameCodec(DEFAULT_STREAM_BUFFER_SIZE);
-            StreamRegistry registry = new StreamRegistry(DEFAULT_MAX_STREAMS, true);
 
             String[] parts = DEFAULT_CHANNEL.split(":");
             Identifier channelId = Identifier.of(parts[0], parts[1]);
@@ -66,28 +61,23 @@ public final class McTransportClient implements ClientModInitializer {
                     });
             bridge.start();
             bridge.setReceiver(frame -> {
-                ClientTunnelSession s = session.get();
-                if (s != null) {
-                    s.handleInbound(frame);
+                if (sessionManager != null) {
+                    sessionManager.handleInbound(frame);
                 }
             });
 
-            ClientListenerController controller = new DynamicLocalTcpListenerController(
-                    executors, () -> session.get(), null);
-            listenerController.set(controller);
-            ClientTunnelSession tunnelSession = new ClientTunnelSession(
+            ClientStreamFactory factory = new DefaultClientStreamFactory(
+                    new dev.kifuko.mctransport.buffer.BufferBudget(
+                            DEFAULT_STREAM_BUFFER_SIZE, DEFAULT_GLOBAL_BUFFER_SIZE),
+                    new dev.kifuko.mctransport.buffer.ReservationState(),
+                    DEFAULT_STREAM_BUFFER_SIZE,
+                    new dev.kifuko.mctransport.kcp.KcpConfig());
+
+            sessionManager = new ClientTunnelSessionManager(
                     bridge,
-                    registry,
-                    new DefaultClientStreamFactory(
-                            new dev.kifuko.mctransport.buffer.BufferBudget(
-                                    DEFAULT_STREAM_BUFFER_SIZE, DEFAULT_GLOBAL_BUFFER_SIZE),
-                            new dev.kifuko.mctransport.buffer.ReservationState(),
-                            DEFAULT_STREAM_BUFFER_SIZE,
-                            new dev.kifuko.mctransport.kcp.KcpConfig()),
-                    System.currentTimeMillis(),
-                    controller);
-            session.set(tunnelSession);
-            tunnelSession.setPingIntervalMillis(15_000L);
+                    factory,
+                    sessionId -> new DynamicLocalTcpListenerController(
+                            executors, () -> sessionManager.session(sessionId).orElse(null), null));
 
             ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
                 McTransport.LOGGER.info("client joined; waiting for server route config");
@@ -97,19 +87,13 @@ public final class McTransportClient implements ClientModInitializer {
             });
             ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
                 McTransport.LOGGER.info("client disconnected; clearing tunnel state");
-                ClientListenerController activeController = listenerController.get();
-                if (activeController != null) {
-                    activeController.clear();
-                }
-                ClientTunnelSession activeSession = session.get();
-                if (activeSession != null) {
-                    activeSession.close();
+                if (sessionManager != null) {
+                    sessionManager.closeAll();
                 }
             });
             ClientTickEvents.END_CLIENT_TICK.register(client -> {
-                ClientTunnelSession s = session.get();
-                if (s != null) {
-                    s.tick(System.currentTimeMillis());
+                if (sessionManager != null) {
+                    sessionManager.tick(System.currentTimeMillis());
                 }
             });
             registerE2eQuickJoinIfRequested();
