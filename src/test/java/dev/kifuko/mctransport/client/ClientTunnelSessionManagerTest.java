@@ -60,6 +60,19 @@ class ClientTunnelSessionManagerTest {
     }
 
     @Test
+    void defaultPingIntervalDoesNotPingEveryTick() {
+        FakeTunnelBridge bridge = new FakeTunnelBridge();
+        ClientTunnelSessionManager manager = new ClientTunnelSessionManager(
+                bridge, new RecordingFactory(), sessionId -> new RecordingListenerController());
+        manager.handleInbound(apply(25580));
+        bridge.clearSent();
+
+        manager.tick(System.currentTimeMillis());
+
+        assertTrue(bridge.sentFrames().isEmpty());
+    }
+
+    @Test
     void unknownSessionIdBeforeConfigApplyThrows() {
         FakeTunnelBridge bridge = new FakeTunnelBridge();
         ClientTunnelSessionManager manager = new ClientTunnelSessionManager(

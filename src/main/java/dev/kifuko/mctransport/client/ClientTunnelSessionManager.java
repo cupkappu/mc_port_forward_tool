@@ -16,6 +16,7 @@ import java.util.function.IntFunction;
 public final class ClientTunnelSessionManager {
 
     private static final int DEFAULT_MAX_STREAMS = 64;
+    private static final long DEFAULT_PING_INTERVAL_MILLIS = 15_000L;
 
     private final TunnelBridge bridge;
     private final ClientStreamFactory streamFactory;
@@ -77,10 +78,12 @@ public final class ClientTunnelSessionManager {
     }
 
     private ClientTunnelSession newSession(int sessionId) {
-        return new ClientTunnelSession(sessionId, bridge,
+        ClientTunnelSession session = new ClientTunnelSession(sessionId, bridge,
                 new StreamRegistry(DEFAULT_MAX_STREAMS, true),
                 streamFactory,
                 System.currentTimeMillis(),
                 listenerFactory.apply(sessionId));
+        session.setPingIntervalMillis(DEFAULT_PING_INTERVAL_MILLIS);
+        return session;
     }
 }
