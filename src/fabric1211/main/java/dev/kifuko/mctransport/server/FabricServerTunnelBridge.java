@@ -13,15 +13,16 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Server-side Fabric 1.21.1 bridge. Each connected player owns one
- * {@link PlayerTunnelSession}; control and stream frames are dispatched
- * by player UUID.
+ * Server-side Fabric 1.21.1 bridge. Per-player sessions are created for
+ * each configured route and dispatched by player UUID and frame session id
+ * (the route's listen port).
  */
 public class FabricServerTunnelBridge implements TunnelBridge {
 
@@ -30,7 +31,8 @@ public class FabricServerTunnelBridge implements TunnelBridge {
     private final ServerConfig config;
     private final RouteStore routeStore;
     private final TunnelExecutorsAdapter executors;
-    private final Map<UUID, PlayerTunnelSession> sessionsByPlayer = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<Integer, PlayerTunnelSession>> sessionsByPlayer = new ConcurrentHashMap<>();
+    private final Map<UUID, Object> playersByUuid = new ConcurrentHashMap<>();
     private final Map<UUID, SerialExecutor> dispatchersByPlayer = new ConcurrentHashMap<>();
     private final Map<PlayerTunnelSession, Object> sessionToPlayer = new ConcurrentHashMap<>();
     private boolean started;
@@ -61,27 +63,38 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             ServerPlayerEntity player = handler.getPlayer();
             UUID playerUuid = player.getUuid();
-            RouteConfig route = routeStore.routeFor(playerUuid);
-            if (route == null) {
+            playersByUuid.put(playerUuid, player);
+            dispatchersByPlayer.put(playerUuid, new SerialExecutor(executors.io()));
+
+            List<RouteConfig> routes = routeStore.routesFor(playerUuid);
+            if (routes.isEmpty()) {
                 McTransport.LOGGER.info("player {} joined; no route configured", playerUuid);
                 return;
             }
-            PlayerTunnelSession session = createSession(route, player);
-            dispatchersByPlayer.put(playerUuid, new SerialExecutor(executors.io()));
-            sessionsByPlayer.put(playerUuid, session);
-            sessionToPlayer.put(session, player);
-            McTransport.LOGGER.info("player {} joined; tunnel session ready", playerUuid);
-            session.sendRouteIfConfigured();
+            Map<Integer, PlayerTunnelSession> sessions = new ConcurrentHashMap<>();
+            for (RouteConfig route : routes) {
+                PlayerTunnelSession session = createSession(route, player);
+                sessions.put(session.sessionId(), session);
+                sessionToPlayer.put(session, player);
+            }
+            sessionsByPlayer.put(playerUuid, sessions);
+            McTransport.LOGGER.info("player {} joined; {} tunnel sessions ready", playerUuid, sessions.size());
+            for (PlayerTunnelSession session : sessions.values()) {
+                session.sendRouteIfConfigured();
+            }
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             ServerPlayerEntity player = handler.getPlayer();
             UUID playerUuid = player.getUuid();
-            PlayerTunnelSession session = sessionsByPlayer.remove(playerUuid);
+            playersByUuid.remove(playerUuid);
             dispatchersByPlayer.remove(playerUuid);
-            if (session != null) {
-                session.close();
-                sessionToPlayer.remove(session);
-                McTransport.LOGGER.info("player disconnected; tunnel session torn down");
+            Map<Integer, PlayerTunnelSession> sessions = sessionsByPlayer.remove(playerUuid);
+            if (sessions != null) {
+                for (PlayerTunnelSession session : sessions.values()) {
+                    session.close();
+                    sessionToPlayer.remove(session);
+                }
+                McTransport.LOGGER.info("player disconnected; tunnel sessions torn down");
             }
         });
 
@@ -95,13 +108,15 @@ public class FabricServerTunnelBridge implements TunnelBridge {
             return;
         }
         dispatcher.execute(() -> {
-            PlayerTunnelSession session = sessionsByPlayer.get(playerUuid);
-            if (session == null) {
-                McTransport.LOGGER.warn("inbound frame for unknown player {}", playerUuid);
-                return;
-            }
             try {
                 Frame wireFrame = codec.decode(bytes);
+                Map<Integer, PlayerTunnelSession> sessions = sessionsByPlayer.get(playerUuid);
+                PlayerTunnelSession session = sessions == null ? null : sessions.get(wireFrame.sessionId());
+                if (session == null) {
+                    McTransport.LOGGER.warn("inbound frame for unknown route session {} player {}",
+                            wireFrame.sessionId(), playerUuid);
+                    return;
+                }
                 session.handleInbound(wireFrame);
             } catch (RuntimeException e) {
                 McTransport.LOGGER.warn("failed to decode inbound frame: {}", e.getMessage());
@@ -109,19 +124,41 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         });
     }
 
-    /** Pushes the latest route config to an online player, if any. */
+    /** Pushes the latest route config to an online player for a specific port. */
     public void applyRouteIfOnline(UUID uuid, int listenPort) {
-        PlayerTunnelSession session = sessionsByPlayer.get(uuid);
-        if (session != null) {
-            session.sendRouteIfConfigured();
+        Map<Integer, PlayerTunnelSession> sessions = sessionsByPlayer.get(uuid);
+        Object player = playersByUuid.get(uuid);
+        if (sessions == null || player == null) {
+            return;
         }
+        // Remove existing session at this port if any
+        PlayerTunnelSession existing = sessions.remove(listenPort);
+        if (existing != null) {
+            existing.sendRouteClear();
+            existing.close();
+            sessionToPlayer.remove(existing);
+        }
+        RouteConfig route = routeStore.routeFor(uuid, listenPort);
+        if (route == null) {
+            return;
+        }
+        PlayerTunnelSession replacement = createSession(route, player);
+        sessions.put(listenPort, replacement);
+        sessionToPlayer.put(replacement, player);
+        replacement.sendRouteIfConfigured();
     }
 
-    /** Clears the route config on an online player. */
+    /** Clears the route config on an online player for a specific port. */
     public void clearRouteIfOnline(UUID uuid, int listenPort) {
-        PlayerTunnelSession session = sessionsByPlayer.get(uuid);
+        Map<Integer, PlayerTunnelSession> sessions = sessionsByPlayer.get(uuid);
+        if (sessions == null) {
+            return;
+        }
+        PlayerTunnelSession session = sessions.remove(listenPort);
         if (session != null) {
             session.sendRouteClear();
+            session.close();
+            sessionToPlayer.remove(session);
         }
     }
 
@@ -161,12 +198,14 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         }
         sessionToPlayer.clear();
         sessionsByPlayer.clear();
+        playersByUuid.clear();
         dispatchersByPlayer.clear();
     }
 
     /** Visible for tests. */
-    public Optional<PlayerTunnelSession> sessionFor(UUID uuid) {
-        return Optional.ofNullable(sessionsByPlayer.get(uuid));
+    public Optional<PlayerTunnelSession> sessionFor(UUID uuid, int listenPort) {
+        Map<Integer, PlayerTunnelSession> sessions = sessionsByPlayer.get(uuid);
+        return Optional.ofNullable(sessions == null ? null : sessions.get(listenPort));
     }
 
     public interface TunnelExecutorsAdapter {
