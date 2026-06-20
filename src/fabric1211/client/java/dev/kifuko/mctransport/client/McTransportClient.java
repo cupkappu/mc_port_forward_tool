@@ -104,6 +104,12 @@ public final class McTransportClient implements ClientModInitializer {
                     activeSession.close();
                 }
             });
+            ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                ClientTunnelSession s = session.get();
+                if (s != null) {
+                    s.tick(System.currentTimeMillis());
+                }
+            });
             registerE2eQuickJoinIfRequested();
         } catch (RuntimeException e) {
             McTransport.LOGGER.error("client init failed", e);

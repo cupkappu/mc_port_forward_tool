@@ -110,9 +110,9 @@ public final class ServerStream {
 
     /**
      * Sends a {@code DATA} frame built from target socket bytes. Reserves
-     * buffer budget first as a burst limiter; releases it immediately after
-     * the synchronous {@code bridge.send} so unidirectional flows cannot
-     * deadlock the budget.
+     * buffer budget first to provide backpressure; budget is released when
+     * the peer writes data to its local socket (bidirectional credit) or
+     * when the reserve-or-wait timeout fires.
      */
     public void sendTargetBytes(byte[] chunk, int length) {
         if (closed.get() || length <= 0) {
@@ -125,17 +125,22 @@ public final class ServerStream {
                 FrameType.DATA, (byte) 0,
                 java.util.Arrays.copyOf(chunk, length), maxPayloadSize);
         session.bridge().send(f);
-        budget.release(streamId, length, reservations);
     }
 
     private boolean reserveOrWait(int bytes) {
+        long deadline = System.currentTimeMillis() + 2_000L;
         while (!closed.get()) {
             try {
                 budget.reserve(streamId, bytes, reservations);
                 return true;
             } catch (IllegalStateException e) {
+                if (System.currentTimeMillis() > deadline) {
+                    budget.releaseAll(streamId, reservations);
+                    deadline = System.currentTimeMillis() + 2_000L;
+                    continue;
+                }
                 try {
-                    Thread.sleep(50);
+                    Thread.sleep(10);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     return false;

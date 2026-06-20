@@ -107,7 +107,6 @@ public final class ClientStream {
                     break;
                 }
                 sendData(buf, n);
-                budget.release(streamId, n, reservations);
             }
         } catch (IOException e) {
             sendReset();
@@ -116,22 +115,24 @@ public final class ClientStream {
         }
     }
 
-    private void waitForBudget() {
-        // MVP: small sleep. Real implementation would use a condition variable.
-        try {
-            Thread.sleep(50);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
     private boolean reserveOrWait(int bytes) {
+        long deadline = System.currentTimeMillis() + 2_000L;
         while (!closed.get()) {
             try {
                 budget.reserve(streamId, bytes, reservations);
                 return true;
             } catch (IllegalStateException e) {
-                waitForBudget();
+                if (System.currentTimeMillis() > deadline) {
+                    budget.releaseAll(streamId, reservations);
+                    deadline = System.currentTimeMillis() + 2_000L;
+                    continue;
+                }
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
             }
         }
         return false;
