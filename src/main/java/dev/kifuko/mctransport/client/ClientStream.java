@@ -176,6 +176,8 @@ public final class ClientStream {
     /** Handles inbound frames from the Minecraft channel. */
     public void onFrame(Frame frame) {
         if (closed.get()) {
+            dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                    "client stream {} ignoring {} frame: stream closed", streamId, frame.type());
             return;
         }
         switch (frame.type()) {
@@ -190,6 +192,9 @@ public final class ClientStream {
     private void writeToLocal(Frame frame) {
         Socket sock = localSocket;
         if (sock == null || sock.isClosed()) {
+            dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                    "client stream {} writeToLocal failed: socket {}",
+                    streamId, sock == null ? "null" : "closed");
             closeReset();
             return;
         }
@@ -198,7 +203,12 @@ public final class ClientStream {
             out.write(frame.payload());
             out.flush();
             budget.release(streamId, frame.payloadLength(), reservations);
+            dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                    "client stream {} wrote {} bytes to local socket",
+                    streamId, frame.payloadLength());
         } catch (IOException e) {
+            dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                    "client stream {} writeToLocal IO error: {}", streamId, e.getMessage());
             closeReset();
         }
     }

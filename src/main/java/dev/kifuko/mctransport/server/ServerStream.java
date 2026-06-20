@@ -125,6 +125,9 @@ public final class ServerStream {
                 FrameType.DATA, (byte) 0,
                 java.util.Arrays.copyOf(chunk, length), maxPayloadSize);
         session.bridge().send(f);
+        dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                "server stream {} sent DATA frame {} bytes (budget reserved={})",
+                streamId, length, reservations.reservedFor(streamId));
     }
 
     static long DRAIN_INTERVAL_MS = 150L;
@@ -139,8 +142,11 @@ public final class ServerStream {
                 if (System.currentTimeMillis() > nextDrain) {
                     long reserved = reservations.reservedFor(streamId);
                     if (reserved > 0) {
-                        budget.release(streamId, (int) Math.max(reserved / 4, 1),
-                                reservations);
+                        int drain = (int) Math.max(reserved / 4, 1);
+                        budget.release(streamId, drain, reservations);
+                        dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                                "server stream {} budget drain: released {} bytes (was {} reserved)",
+                                streamId, drain, reserved);
                     }
                     nextDrain = System.currentTimeMillis() + DRAIN_INTERVAL_MS;
                     continue;

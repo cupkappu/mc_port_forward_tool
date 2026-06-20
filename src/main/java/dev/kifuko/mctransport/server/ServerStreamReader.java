@@ -1,5 +1,7 @@
 package dev.kifuko.mctransport.server;
 
+import dev.kifuko.mctransport.McTransport;
+
 import java.io.IOException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -14,6 +16,7 @@ public final class ServerStreamReader {
     private final byte[] buffer;
     private final ExecutorService io;
     private final CopyOnWriteArrayList<Runnable> shutdownHooks = new CopyOnWriteArrayList<>();
+    private long totalBytesRead;
 
     public ServerStreamReader(ServerStream stream, int chunkBytes, ExecutorService io) {
         this.stream = stream;
@@ -38,10 +41,13 @@ public final class ServerStreamReader {
                 try {
                     n = stream.readTargetChunk(buffer);
                 } catch (IOException e) {
+                    McTransport.LOGGER.debug("server stream {} read error: {}", stream.streamId(), e.getMessage());
                     stream.closeReset();
                     return;
                 }
                 if (n < 0) {
+                    McTransport.LOGGER.debug("server stream {} target EOF after {} total bytes read",
+                            stream.streamId(), totalBytesRead);
                     stream.sendClose();
                     stream.closeClean();
                     return;
@@ -49,6 +55,9 @@ public final class ServerStreamReader {
                 if (n == 0) {
                     continue;
                 }
+                totalBytesRead += n;
+                McTransport.LOGGER.debug("server stream {} read {} bytes from target (total: {})",
+                        stream.streamId(), n, totalBytesRead);
                 stream.sendTargetBytes(buffer, n);
             }
         } finally {

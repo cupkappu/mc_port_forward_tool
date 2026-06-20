@@ -145,6 +145,9 @@ public final class PlayerTunnelSession {
         }
         lastInboundMillis = nowMillisSupplier;
         FrameType type = frame.type();
+        dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                "server handleInbound: type={} streamId={} payload={}B",
+                type, frame.streamId(), frame.payloadLength());
         switch (type) {
             case CONFIG_ACK -> handleConfigAck(frame);
             case PING -> sendPong(frame.streamId());
@@ -234,9 +237,15 @@ public final class PlayerTunnelSession {
             if (frame.type() == FrameType.RESET) {
                 return;
             }
+            dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                    "server dispatch: unknown stream {}, sending RESET (type={})",
+                    streamId, frame.type());
             sendReset(streamId);
             return;
         }
+        dev.kifuko.mctransport.McTransport.LOGGER.debug(
+                "server dispatch: stream {} type={} payload={}B",
+                streamId, frame.type(), frame.payloadLength());
         stream.onFrame(frame);
     }
 

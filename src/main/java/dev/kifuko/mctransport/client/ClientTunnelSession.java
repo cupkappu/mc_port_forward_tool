@@ -92,6 +92,8 @@ public final class ClientTunnelSession {
             throw new IllegalArgumentException("frame must not be null");
         }
         lastInboundMillis = System.currentTimeMillis();
+        McTransport.LOGGER.debug("client handleInbound: type={} streamId={} payload={}B",
+                frame.type(), frame.streamId(), frame.payloadLength());
         switch (frame.type()) {
             case CONFIG_APPLY -> handleConfigApply(frame);
             case CONFIG_CLEAR -> handleConfigClear();
@@ -203,11 +205,15 @@ public final class ClientTunnelSession {
         }
         if (stream == null) {
             // Unknown stream ID — send RESET so the server cleans up.
+            McTransport.LOGGER.debug("client dispatch: unknown stream {}, sending RESET (type={})",
+                    streamId, frame.type());
             Frame reset = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
                     FrameType.RESET, (byte) 0, new byte[0]);
             bridge.send(reset);
             return;
         }
+        McTransport.LOGGER.debug("client dispatch: stream {} type={} payload={}B",
+                streamId, frame.type(), frame.payloadLength());
         stream.onFrame(frame);
     }
 
