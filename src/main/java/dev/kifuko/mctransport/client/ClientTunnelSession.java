@@ -6,6 +6,7 @@ import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.protocol.ProtocolException;
 import dev.kifuko.mctransport.protocol.RouteControlPayload;
+import dev.kifuko.mctransport.protocol.StreamMode;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 
 import java.io.IOException;
@@ -35,6 +36,7 @@ public final class ClientTunnelSession {
     private final Map<Integer, ClientStream> streams = new HashMap<>();
     private final Object lock = new Object();
     private boolean routeApplied;
+    private volatile StreamMode streamMode = StreamMode.DIRECT;
     private volatile long lastInboundMillis;
     private long pingIntervalMillis;
     private long lastPingMillis;
@@ -123,7 +125,9 @@ public final class ClientTunnelSession {
         try {
             listenerController.apply(apply.listenHost(), apply.listenPort());
             routeApplied = true;
-            sendConfigAck(true, "listening on " + apply.listenHost() + ":" + apply.listenPort());
+            this.streamMode = apply.mode();
+            sendConfigAck(true, "listening on " + apply.listenHost() + ":" + apply.listenPort()
+                    + " (mode=" + apply.mode() + ")");
             McTransport.LOGGER.info("server route applied; listening on {}:{}",
                     apply.listenHost(), apply.listenPort());
         } catch (IOException | RuntimeException e) {
@@ -152,7 +156,7 @@ public final class ClientTunnelSession {
             }
             int id = registry.allocateClient();
             registry.setState(id, dev.kifuko.mctransport.stream.StreamState.OPEN_SENT);
-            ClientStream stream = streamFactory.create(this, id);
+            ClientStream stream = streamFactory.create(this, id, streamMode);
             streams.put(id, stream);
             Frame open = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, id,
                     FrameType.OPEN, (byte) 0, new byte[0]);

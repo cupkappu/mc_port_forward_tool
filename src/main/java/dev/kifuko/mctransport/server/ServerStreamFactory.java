@@ -1,5 +1,7 @@
 package dev.kifuko.mctransport.server;
 
+import dev.kifuko.mctransport.protocol.StreamMode;
+
 /**
  * Strategy the server uses to create and look up per-stream objects.
  *
@@ -14,7 +16,7 @@ public interface ServerStreamFactory {
      * that ID. On failure, the factory must send {@code RESET} (or
      * {@code ERROR}) and remove the registry entry itself.
      */
-    void dialAndAttach(PlayerTunnelSession session, int streamId);
+    void dialAndAttach(PlayerTunnelSession session, int streamId, StreamMode mode);
 
     /** Returns the active stream for {@code streamId}, or null if none. */
     ServerStream find(PlayerTunnelSession session, int streamId);

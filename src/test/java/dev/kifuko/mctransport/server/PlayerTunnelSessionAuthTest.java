@@ -9,6 +9,7 @@ import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.protocol.ProtocolException;
 import dev.kifuko.mctransport.protocol.RouteControlPayload;
+import dev.kifuko.mctransport.protocol.StreamMode;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -169,7 +170,7 @@ class PlayerTunnelSessionAuthTest {
     }
 
     private static final class NoopServerStreamFactory implements ServerStreamFactory {
-        @Override public void dialAndAttach(PlayerTunnelSession s, int id) { }
+        @Override public void dialAndAttach(PlayerTunnelSession s, int id, StreamMode m) { }
         @Override public ServerStream find(PlayerTunnelSession s, int id) { return null; }
         @Override public void closeAll(PlayerTunnelSession s) { }
     }
@@ -177,7 +178,7 @@ class PlayerTunnelSessionAuthTest {
     private static final class RecordingFactory implements ServerStreamFactory {
         final List<Integer> dialed = new java.util.ArrayList<>();
         final List<PlayerTunnelSession> dialedSession = new java.util.ArrayList<>();
-        @Override public void dialAndAttach(PlayerTunnelSession s, int id) {
+        @Override public void dialAndAttach(PlayerTunnelSession s, int id, StreamMode m) {
             dialed.add(id);
             dialedSession.add(s);
             s.registry().registerServer(id);

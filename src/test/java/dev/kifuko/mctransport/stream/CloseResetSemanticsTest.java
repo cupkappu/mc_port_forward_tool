@@ -117,7 +117,7 @@ class CloseResetSemanticsTest {
                                            ReservationState res) {
         return new ClientTunnelSession(b,
                 new StreamRegistry(8, true),
-                (sess, id) -> new DirectClientStream(sess, id, budget, res, 1024),
+                (sess, id, mode) -> new DirectClientStream(sess, id, budget, res, 1024),
                 0L);
     }
 }

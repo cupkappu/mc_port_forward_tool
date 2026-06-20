@@ -9,6 +9,7 @@ import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.protocol.ProtocolException;
 import dev.kifuko.mctransport.protocol.RouteControlPayload;
+import dev.kifuko.mctransport.protocol.StreamMode;
 import dev.kifuko.mctransport.server.NoopServerStreamFactoryForTest;
 import dev.kifuko.mctransport.server.PlayerTunnelSession;
 import dev.kifuko.mctransport.server.RouteStore;

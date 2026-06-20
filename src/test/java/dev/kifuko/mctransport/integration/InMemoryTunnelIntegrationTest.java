@@ -92,7 +92,7 @@ class InMemoryTunnelIntegrationTest {
                 connector, 1_700_000_000L, streamFactory);
 
         clientSession = new ClientTunnelSession(clientBridge, clientRegistry,
-                (sess, id) -> new DirectClientStream(sess, id, clientBudget, clientRes, 4096),
+                (sess, id, mode) -> new DirectClientStream(sess, id, clientBudget, clientRes, 4096),
                 0L);
 
         // Wire receivers only after both sessions exist.

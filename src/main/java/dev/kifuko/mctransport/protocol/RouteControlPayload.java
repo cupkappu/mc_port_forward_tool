@@ -18,6 +18,11 @@ public final class RouteControlPayload {
 
     /** Encodes the {@code CONFIG_APPLY} payload. */
     public static byte[] encodeApply(String listenHost, int listenPort) {
+        return encodeApply(listenHost, listenPort, StreamMode.DIRECT);
+    }
+
+    /** Encodes the {@code CONFIG_APPLY} payload with stream mode. */
+    public static byte[] encodeApply(String listenHost, int listenPort, StreamMode mode) {
         if (listenHost == null || listenHost.isEmpty()) {
             throw new IllegalArgumentException("listenHost must not be blank");
         }
@@ -25,8 +30,10 @@ public final class RouteControlPayload {
             throw new IllegalArgumentException(
                     "listenPort must be in 1..65535, got: " + listenPort);
         }
+        if (mode == null) mode = StreamMode.DIRECT;
         return ("{\"listenHost\":\"" + listenHost
-                + "\",\"listenPort\":" + listenPort + "}")
+                + "\",\"listenPort\":" + listenPort
+                + ",\"streamMode\":\"" + mode.name() + "\"}")
                 .getBytes(StandardCharsets.UTF_8);
     }
 
@@ -45,7 +52,14 @@ public final class RouteControlPayload {
             throw new ProtocolException(
                     "CONFIG_APPLY listenPort out of range: " + port);
         }
-        return new Apply(host, port);
+        String modeStr;
+        try {
+            modeStr = extractString(body, "streamMode");
+        } catch (ProtocolException e) {
+            modeStr = null; // backward compat: payloads before v0.2.3
+        }
+        StreamMode mode = modeStr != null ? StreamMode.fromString(modeStr) : StreamMode.DIRECT;
+        return new Apply(host, port, mode);
     }
 
     public static byte[] encodeAck(boolean ok, String message) {
@@ -97,7 +111,10 @@ public final class RouteControlPayload {
         return Integer.parseInt(m.group("value"));
     }
 
-    public record Apply(String listenHost, int listenPort) {
+    public record Apply(String listenHost, int listenPort, StreamMode mode) {
+        public Apply(String listenHost, int listenPort) {
+            this(listenHost, listenPort, StreamMode.DIRECT);
+        }
     }
 
     public record Ack(boolean ok, String message) {
