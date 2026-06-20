@@ -28,7 +28,7 @@ class FabricServerBridgeConfigTest {
                 123, 7, "debug");
         TestBridge bridge = new TestBridge(config);
 
-        PlayerTunnelSession session = bridge.newSessionForTest(new Object());
+        PlayerTunnelSession session = bridge.newSessionForTest(route, new Object());
 
         assertEquals(route, session.config().routeFor(uuid));
         assertEquals(3, session.config().getMaxStreamsPerPlayer());
@@ -61,8 +61,8 @@ class FabricServerBridgeConfigTest {
                     });
         }
 
-        PlayerTunnelSession newSessionForTest(Object player) {
-            return createSession(player);
+        PlayerTunnelSession newSessionForTest(RouteConfig route, Object player) {
+            return createSession(route, player);
         }
     }
 }

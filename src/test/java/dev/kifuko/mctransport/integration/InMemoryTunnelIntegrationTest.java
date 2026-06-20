@@ -85,13 +85,13 @@ class InMemoryTunnelIntegrationTest {
         connector = new TargetTcpConnector(10, io);
         streamFactory = new DefaultServerStreamFactory(connector, 4096, 4096, io);
 
-        serverSession = new PlayerTunnelSession(PLAYER, serverBridge, serverCfg,
+        serverSession = new PlayerTunnelSession(PLAYER, route, serverBridge, serverCfg,
                 new RouteStore(Path.of("build/tmp/test-route-store"),
                         "mctransport.server.toml", serverCfg),
                 serverRegistry, serverBudget, serverRes,
                 connector, 1_700_000_000L, streamFactory);
 
-        clientSession = new ClientTunnelSession(clientBridge, clientRegistry,
+        clientSession = new ClientTunnelSession(25580, clientBridge, clientRegistry,
                 (sess, id, mode) -> new DirectClientStream(sess, id, clientBudget, clientRes, 4096),
                 0L);
 
@@ -179,12 +179,12 @@ class InMemoryTunnelIntegrationTest {
         for (int i = 0; i < payload1.length; i++) {
             byte[] oneByte = new byte[]{payload1[i]};
             clientSession.bridge().send(Frame.create(ClientTunnelSession.PROTOCOL_VERSION,
-                    0, id1, FrameType.DATA, (byte) 0, oneByte, 4096));
+                    25580, id1, FrameType.DATA, (byte) 0, oneByte, 4096));
         }
         for (int i = 0; i < payload2.length; i++) {
             byte[] oneByte = new byte[]{payload2[i]};
             clientSession.bridge().send(Frame.create(ClientTunnelSession.PROTOCOL_VERSION,
-                    0, id2, FrameType.DATA, (byte) 0, oneByte, 4096));
+                    25580, id2, FrameType.DATA, (byte) 0, oneByte, 4096));
         }
 
         Thread.sleep(500);
@@ -197,7 +197,7 @@ class InMemoryTunnelIntegrationTest {
         activateRoute();
         clientBridge.clearSent();
         Frame ghost = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 9999, FrameType.DATA, (byte) 0, "x".getBytes());
+                25580, 9999, FrameType.DATA, (byte) 0, "x".getBytes());
         clientSession.handleInbound(ghost);
         assertEquals(1, clientBridge.sentFrames().size());
         assertEquals(FrameType.RESET, clientBridge.sentFrames().get(0).type());
@@ -209,7 +209,7 @@ class InMemoryTunnelIntegrationTest {
         activateRoute();
         serverBridge.clearSent();
         Frame ghost = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 9999, FrameType.DATA, (byte) 0, "x".getBytes());
+                25580, 9999, FrameType.DATA, (byte) 0, "x".getBytes());
         serverSession.handleInbound(ghost);
         assertEquals(1, serverBridge.sentFrames().size());
         assertEquals(FrameType.RESET, serverBridge.sentFrames().get(0).type());
@@ -224,21 +224,21 @@ class InMemoryTunnelIntegrationTest {
         StreamRegistry sr = new StreamRegistry(1, false);
         FakeTunnelBridge directBridge = new FakeTunnelBridge();
         directBridge.setReceiver(frame -> { });
-        PlayerTunnelSession ps = new PlayerTunnelSession(PLAYER, directBridge, small,
+        PlayerTunnelSession ps = new PlayerTunnelSession(PLAYER, route, directBridge, small,
                 new RouteStore(Path.of("build/tmp/test-route-store"),
                         "mctransport.server.toml", small),
                 sr,
                 new BufferBudget(4096, 65536L), new ReservationState(),
                 connector, 1_700_000_000L, streamFactory);
         ps.sendRouteIfConfigured();
-        ps.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION, 0, 0,
+        ps.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION, 25580, 0,
                 FrameType.CONFIG_ACK, (byte) 0,
                 dev.kifuko.mctransport.protocol.RouteControlPayload.encodeAck(true, "ok")));
 
         ps.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 1, FrameType.OPEN, (byte) 0, new byte[0]));
+                25580, 1, FrameType.OPEN, (byte) 0, new byte[0]));
         ps.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 2, FrameType.OPEN, (byte) 0, new byte[0]));
+                25580, 2, FrameType.OPEN, (byte) 0, new byte[0]));
         waitFor(() -> sr.size() >= 1);
         assertTrue(sr.size() <= 1, "registry must enforce cap; got: " + sr.size());
     }

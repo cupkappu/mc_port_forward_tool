@@ -46,7 +46,7 @@ public final class DefaultServerStreamFactory implements ServerStreamFactory {
     @Override
     public synchronized void dialAndAttach(PlayerTunnelSession session, int streamId,
                                            StreamMode mode) {
-        var route = session.activeRoute();
+        var route = session.route();
         if (route == null) {
             sendReset(session, streamId);
             return;
@@ -102,7 +102,7 @@ public final class DefaultServerStreamFactory implements ServerStreamFactory {
 
     private void sendReset(PlayerTunnelSession session, int streamId) {
         session.bridge().send(dev.kifuko.mctransport.protocol.Frame.createTrusted(
-                PlayerTunnelSession.PROTOCOL_VERSION, PlayerTunnelSession.SESSION_ID, streamId,
+                PlayerTunnelSession.PROTOCOL_VERSION, session.sessionId(), streamId,
                 dev.kifuko.mctransport.protocol.FrameType.RESET, (byte) 0, new byte[0]));
     }
 }

@@ -1,6 +1,7 @@
 package dev.kifuko.mctransport.server;
 
 import dev.kifuko.mctransport.McTransport;
+import dev.kifuko.mctransport.config.RouteConfig;
 import dev.kifuko.mctransport.config.ServerConfig;
 import dev.kifuko.mctransport.net.SerialExecutor;
 import dev.kifuko.mctransport.net.TunnelBridge;
@@ -61,7 +62,12 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             ServerPlayerEntity player = handler.getPlayer();
             UUID playerUuid = player.getUuid();
-            PlayerTunnelSession session = createSession(player);
+            RouteConfig route = routeStore.routeFor(playerUuid);
+            if (route == null) {
+                McTransport.LOGGER.info("player {} joined; no route configured", playerUuid);
+                return;
+            }
+            PlayerTunnelSession session = createSession(route, player);
             dispatchersByPlayer.put(playerUuid, new SerialExecutor(executors.io()));
             sessionsByPlayer.put(playerUuid, session);
             sessionToPlayer.put(session, player);
@@ -126,15 +132,14 @@ public class FabricServerTunnelBridge implements TunnelBridge {
         }
     }
 
-    protected PlayerTunnelSession createSession(Object player) {
+    protected PlayerTunnelSession createSession(RouteConfig route, Object player) {
         ServerConfig cfg = config;
         TargetTcpConnector connector = new TargetTcpConnector(
                 cfg.getConnectTimeoutSeconds(), executors.io());
         DefaultServerStreamFactory factory = new DefaultServerStreamFactory(connector,
                 cfg.getStreamBufferSize(), 4096, executors.io());
-        UUID uuid = player instanceof ServerPlayerEntity sp
-                ? sp.getUuid() : UUID.randomUUID();
-        return new PlayerTunnelSession(uuid, new PlayerBridge(player), cfg, routeStore,
+        UUID uuid = route.getPlayerUuid();
+        return new PlayerTunnelSession(uuid, route, new PlayerBridge(player), cfg, routeStore,
                 new dev.kifuko.mctransport.stream.StreamRegistry(
                         cfg.getMaxStreamsPerPlayer(), false),
                 new dev.kifuko.mctransport.buffer.BufferBudget(

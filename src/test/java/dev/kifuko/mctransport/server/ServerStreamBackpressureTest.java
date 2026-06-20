@@ -33,7 +33,7 @@ class ServerStreamBackpressureTest {
                 "127.0.0.1", 10000);
         ServerConfig config = new ServerConfig(true, "mctransport:main",
                 List.of(route), 8, 8, 8L, 300, 10, "info");
-        PlayerTunnelSession session = new PlayerTunnelSession(uuid, bridge, config,
+        PlayerTunnelSession session = new PlayerTunnelSession(uuid, route, bridge, config,
                 new RouteStore(Path.of("build/tmp/test-route-store"),
                         "mctransport.server.toml", config),
                 new StreamRegistry(8, false), budget, reservations,
@@ -65,7 +65,7 @@ class ServerStreamBackpressureTest {
         RouteConfig route = new RouteConfig(uuid, "Steve", 25580, "127.0.0.1", 10000);
         ServerConfig config = new ServerConfig(true, "mctransport:main",
                 List.of(route), 8, 8, 8L, 300, 10, "info");
-        PlayerTunnelSession session = new PlayerTunnelSession(uuid, bridge, config,
+        PlayerTunnelSession session = new PlayerTunnelSession(uuid, route, bridge, config,
                 new RouteStore(Path.of("build/tmp/test-route-store"),
                         "mctransport.server.toml", config),
                 new StreamRegistry(8, false), budget, reservations,

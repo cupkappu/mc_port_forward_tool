@@ -175,7 +175,7 @@ public final class KcpClientStream implements ClientStream {
         byte[] body = new byte[len];
         System.arraycopy(data, 0, body, 0, len);
         Frame f = Frame.create(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.DATA,
+                session.sessionId(), streamId, FrameType.DATA,
                 (byte) 0, body, maxKcpFramePayloadSize);
         enqueueKcpFrame(f);
     }
@@ -228,7 +228,7 @@ public final class KcpClientStream implements ClientStream {
     private void sendClose() {
         if (!closed.compareAndSet(false, true)) return;
         Frame f = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.CLOSE,
+                session.sessionId(), streamId, FrameType.CLOSE,
                 (byte) 0, new byte[0]);
         session.bridge().send(f);
         cleanup();
@@ -237,7 +237,7 @@ public final class KcpClientStream implements ClientStream {
     private void sendReset() {
         if (!closed.compareAndSet(false, true)) return;
         Frame f = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.RESET,
+                session.sessionId(), streamId, FrameType.RESET,
                 (byte) 0, new byte[0]);
         session.bridge().send(f);
         cleanup();
@@ -252,7 +252,7 @@ public final class KcpClientStream implements ClientStream {
     public void closeClean() {
         if (!closed.compareAndSet(false, true)) return;
         Frame f = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.CLOSE,
+                session.sessionId(), streamId, FrameType.CLOSE,
                 (byte) 0, new byte[0]);
         session.bridge().send(f);
         cleanup();
@@ -262,7 +262,7 @@ public final class KcpClientStream implements ClientStream {
     public void closeReset() {
         if (!closed.compareAndSet(false, true)) return;
         Frame f = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.RESET,
+                session.sessionId(), streamId, FrameType.RESET,
                 (byte) 0, new byte[0]);
         session.bridge().send(f);
         cleanup();

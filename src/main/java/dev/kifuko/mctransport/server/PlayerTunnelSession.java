@@ -14,24 +14,20 @@ import dev.kifuko.mctransport.stream.StreamRegistry;
 import java.util.UUID;
 
 /**
- * Per-player tunnel session for the server-side MC Transport Dialer.
+ * Per-route tunnel session for the server-side MC Transport Dialer.
  *
- * <p>The server identifies the player UUID from the Minecraft session
- * itself (Fabric provides it on the join event). There is no
- * client-supplied AUTH handshake in the server-pushed route mode. The
- * session looks up a route for the player's UUID in {@link RouteStore},
- * pushes {@code CONFIG_APPLY} on join, and dials the route's target once
- * the client replies with {@code CONFIG_ACK}.</p>
+ * <p>Each session is bound to a single {@link RouteConfig} and uses
+ * {@code route.listenPort} as its frame {@code sessionId}. The server
+ * creates one session per (player UUID, listenPort) pair.</p>
  */
 public final class PlayerTunnelSession {
 
     /** Wire-protocol version exchanged in control payloads. */
     public static final byte PROTOCOL_VERSION = 1;
 
-    /** Session id used for every control frame in the MVP. */
-    public static final int SESSION_ID = 0;
-
     private final UUID playerUuid;
+    private final RouteConfig route;
+    private final int sessionId;
     private final TunnelBridge bridge;
     private final ServerConfig config;
     private final RouteStore routeStore;
@@ -44,9 +40,9 @@ public final class PlayerTunnelSession {
 
     private volatile long lastInboundMillis;
     private volatile boolean routeActive;
-    private volatile RouteConfig activeRoute;
 
     public PlayerTunnelSession(UUID playerUuid,
+                               RouteConfig route,
                                TunnelBridge bridge,
                                ServerConfig config,
                                RouteStore routeStore,
@@ -56,7 +52,16 @@ public final class PlayerTunnelSession {
                                TargetTcpConnector connector,
                                long nowMillis,
                                ServerStreamFactory streamFactory) {
+        if (route == null) {
+            throw new IllegalArgumentException("route must not be null");
+        }
+        if (!route.getPlayerUuid().equals(playerUuid)) {
+            throw new IllegalArgumentException(
+                    "route playerUuid must match session playerUuid");
+        }
         this.playerUuid = playerUuid;
+        this.route = route;
+        this.sessionId = route.routeSessionId();
         this.bridge = bridge;
         this.config = config;
         this.routeStore = routeStore;
@@ -71,6 +76,16 @@ public final class PlayerTunnelSession {
 
     public UUID playerUuid() {
         return playerUuid;
+    }
+
+    /** The session id used in outbound frames — equal to {@code route.listenPort}. */
+    public int sessionId() {
+        return sessionId;
+    }
+
+    /** The route this session is bound to. */
+    public RouteConfig route() {
+        return route;
     }
 
     public TunnelBridge bridge() {
@@ -113,26 +128,17 @@ public final class PlayerTunnelSession {
         return routeActive;
     }
 
-    public RouteConfig activeRoute() {
-        return activeRoute;
-    }
-
     /**
-     * Pushes the configured route to the client when one exists.
-     * Called by the Fabric bridge right after the player joins.
+     * Pushes the bound route config to the client.
+     * Called by the Fabric bridge right after session creation.
      */
     public void sendRouteIfConfigured() {
-        RouteConfig route = routeStore.routeFor(playerUuid);
-        if (route == null) {
-            return;
-        }
         sendConfigApply(route);
     }
 
     /** Pushes {@code CONFIG_CLEAR} and tears down any open streams. */
     public void sendRouteClear() {
         routeActive = false;
-        activeRoute = null;
         sendConfigClear();
         streamFactory.closeAll(this);
         registry.clear();
@@ -142,6 +148,10 @@ public final class PlayerTunnelSession {
     public void handleInbound(Frame frame) {
         if (frame == null) {
             throw new IllegalArgumentException("frame must not be null");
+        }
+        if (frame.sessionId() != sessionId) {
+            throw new ProtocolException("unexpected session id " + frame.sessionId()
+                    + " for route " + sessionId);
         }
         lastInboundMillis = nowMillisSupplier;
         FrameType type = frame.type();
@@ -175,45 +185,44 @@ public final class PlayerTunnelSession {
                     "client reported route apply failure: {}",
                     ack.message());
             routeActive = false;
-            activeRoute = null;
             streamFactory.closeAll(this);
             registry.clear();
             return;
         }
-        if (activeRoute == null) {
-            // Ack for CONFIG_CLEAR or before any apply: no-op.
+        if (routeActive) {
+            // Already active: duplicate ack, no-op.
             return;
         }
         routeActive = true;
         dev.kifuko.mctransport.McTransport.LOGGER.info(
                 "route active for player {} -> {}:{}",
-                playerUuid, activeRoute.getTargetHost(), activeRoute.getTargetPort());
+                playerUuid, route.getTargetHost(), route.getTargetPort());
     }
 
     private void requireRoute() {
-        if (!routeActive || activeRoute == null) {
+        if (!routeActive) {
             throw new ProtocolException(
                     "frame received before route is active for " + playerUuid);
         }
     }
 
-    private void sendConfigApply(RouteConfig route) {
-        activeRoute = route;
-        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
+    private void sendConfigApply(RouteConfig configRoute) {
+        routeActive = false;
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, sessionId, 0,
                 FrameType.CONFIG_APPLY, (byte) 0,
-                RouteControlPayload.encodeApply(route.getListenHost(),
-                        route.getListenPort(), route.getMode()));
+                RouteControlPayload.encodeApply(configRoute.getListenHost(),
+                        configRoute.getListenPort(), configRoute.getMode()));
         bridge.send(f);
     }
 
     private void sendConfigClear() {
-        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, sessionId, 0,
                 FrameType.CONFIG_CLEAR, (byte) 0, new byte[0]);
         bridge.send(f);
     }
 
     private void sendPong(int streamId) {
-        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, sessionId, streamId,
                 FrameType.PONG, (byte) 0, new byte[0]);
         bridge.send(f);
     }
@@ -228,7 +237,7 @@ public final class PlayerTunnelSession {
             sendError(streamId, "max streams reached");
             return;
         }
-        streamFactory.dialAndAttach(this, streamId, activeRoute.getMode());
+        streamFactory.dialAndAttach(this, streamId, route.getMode());
     }
 
     private void dispatchToStream(Frame frame) {
@@ -251,14 +260,14 @@ public final class PlayerTunnelSession {
     }
 
     private void sendReset(int streamId) {
-        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, sessionId, streamId,
                 FrameType.RESET, (byte) 0, new byte[0]);
         bridge.send(f);
     }
 
     private void sendError(int streamId, String message) {
         byte[] body = message == null ? new byte[0] : message.getBytes();
-        Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
+        Frame f = Frame.createTrusted(PROTOCOL_VERSION, sessionId, streamId,
                 FrameType.ERROR, (byte) 0, body);
         bridge.send(f);
     }
@@ -266,7 +275,6 @@ public final class PlayerTunnelSession {
     /** Called when the underlying player disconnects. Idempotent. */
     public void close() {
         routeActive = false;
-        activeRoute = null;
         streamFactory.closeAll(this);
         registry.clear();
     }

@@ -72,7 +72,7 @@ class CloseResetSemanticsTest {
                         java.util.List.of(route), 8, 1024, 8192L, 300, 10, "info");
         dev.kifuko.mctransport.server.PlayerTunnelSession playerSession =
                 new dev.kifuko.mctransport.server.PlayerTunnelSession(
-                        playerUuid, b, serverConfig,
+                        playerUuid, route, b, serverConfig,
                         new dev.kifuko.mctransport.server.RouteStore(
                                 Path.of("build/tmp/test-route-store"),
                                 "mctransport.server.toml", serverConfig),

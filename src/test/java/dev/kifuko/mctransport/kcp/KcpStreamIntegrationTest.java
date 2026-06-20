@@ -74,7 +74,7 @@ class KcpStreamIntegrationTest {
         ServerConfig serverConfig = new ServerConfig(true, "mctransport:main",
                 List.of(route), 16, 4096, 65536L, 300, 10, "info");
 
-        serverSession = new PlayerTunnelSession(PLAYER, serverBridge, serverConfig,
+        serverSession = new PlayerTunnelSession(PLAYER, route, serverBridge, serverConfig,
                 new RouteStore(tempDir, "mctransport.server.toml", serverConfig),
                 new StreamRegistry(16, false),
                 new BufferBudget(16384, 65536L), new ReservationState(),
@@ -82,7 +82,7 @@ class KcpStreamIntegrationTest {
                 new DefaultServerStreamFactory(new TargetTcpConnector(10, io),
                         4096, 4096, io, kcpConfig));
 
-        clientSession = new ClientTunnelSession(clientBridge,
+        clientSession = new ClientTunnelSession(25580, clientBridge,
                 new StreamRegistry(16, true),
                 new DefaultClientStreamFactory(new BufferBudget(16384, 65536L),
                         new ReservationState(), 4096, kcpConfig),

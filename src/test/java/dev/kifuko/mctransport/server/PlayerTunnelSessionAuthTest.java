@@ -48,81 +48,114 @@ class PlayerTunnelSessionAuthTest {
                 "mctransport.server.toml", config);
     }
 
-    private void setUp(List<RouteConfig> routes, ServerStreamFactory factory) {
+    private void setUp(RouteConfig route, List<RouteConfig> routes, ServerStreamFactory factory) {
         ServerConfig cfg = config(routes);
         bridge = new FakeTunnelBridge();
         bridge.setReceiver(frame -> { });
         registry = new StreamRegistry(8, false);
         TargetTcpConnector connector = new TargetTcpConnector(10,
                 Executors.newSingleThreadExecutor());
-        session = new PlayerTunnelSession(PLAYER_UUID, bridge, cfg, store(cfg),
+        session = new PlayerTunnelSession(PLAYER_UUID, route, bridge, cfg, store(cfg),
                 registry, new BufferBudget(1024, 8192L), new ReservationState(),
                 connector, 1_700_000_000L, factory);
     }
 
     private void ack(boolean ok) {
         session.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.CONFIG_ACK, (byte) 0,
+                25580, 0, FrameType.CONFIG_ACK, (byte) 0,
                 RouteControlPayload.encodeAck(ok, ok ? "ok" : "failed")));
     }
 
     @Test
     void newSessionHasNoActiveRouteUntilAck() {
-        setUp(List.of(route()), new NoopServerStreamFactory());
+        setUp(route(), List.of(route()), new NoopServerStreamFactory());
         assertTrue(!session.isRouteActive());
-        assertNull(session.activeRoute());
+    }
+
+    @Test
+    void configuredRouteUsesListenPortAsSessionId() {
+        RouteConfig rt = route();
+        setUp(rt, List.of(rt), new NoopServerStreamFactory());
+        session.sendRouteIfConfigured();
+        Frame apply = bridge.sentFrames().get(0);
+        assertEquals(25580, apply.sessionId());
+        assertEquals(25580, session.sessionId());
     }
 
     @Test
     void configuredRouteIsPushedOnJoin() {
-        RouteConfig route = route();
-        setUp(List.of(route), new NoopServerStreamFactory());
+        RouteConfig rt = route();
+        setUp(rt, List.of(rt), new NoopServerStreamFactory());
         session.sendRouteIfConfigured();
 
         assertEquals(1, bridge.sentFrames().size());
         Frame apply = bridge.sentFrames().get(0);
         assertEquals(FrameType.CONFIG_APPLY, apply.type());
+        assertEquals(25580, apply.sessionId());
         RouteControlPayload.Apply decoded = RouteControlPayload.decodeApply(apply.payload());
         assertEquals("127.0.0.1", decoded.listenHost());
         assertEquals(25580, decoded.listenPort());
-        assertSame(route, session.activeRoute());
         assertTrue(!session.isRouteActive());
     }
 
     @Test
     void successfulAckMarksRouteActive() {
-        RouteConfig route = route();
-        setUp(List.of(route), new NoopServerStreamFactory());
+        RouteConfig rt = route();
+        setUp(rt, List.of(rt), new NoopServerStreamFactory());
         session.sendRouteIfConfigured();
         ack(true);
         assertTrue(session.isRouteActive());
-        assertSame(route, session.activeRoute());
     }
 
     @Test
     void failedAckClearsRoute() {
-        setUp(List.of(route()), new NoopServerStreamFactory());
+        setUp(route(), List.of(route()), new NoopServerStreamFactory());
         session.sendRouteIfConfigured();
         ack(false);
         assertTrue(!session.isRouteActive());
-        assertNull(session.activeRoute());
     }
 
     @Test
     void framesBeforeRouteAckAreRejected() {
-        setUp(List.of(route()), new NoopServerStreamFactory());
+        setUp(route(), List.of(route()), new NoopServerStreamFactory());
         Frame data = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 1, FrameType.DATA, (byte) 0, "hello".getBytes());
+                25580, 1, FrameType.DATA, (byte) 0, "hello".getBytes());
         ProtocolException ex = assertThrows(ProtocolException.class,
                 () -> session.handleInbound(data));
         assertTrue(ex.getMessage().contains("before route is active"));
     }
 
     @Test
+    void pongUsesBoundSessionId() {
+        RouteConfig rt = route();
+        setUp(rt, List.of(rt), new NoopServerStreamFactory());
+        session.sendRouteIfConfigured();
+        session.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
+                25580, 0, FrameType.CONFIG_ACK, (byte) 0,
+                RouteControlPayload.encodeAck(true, "ok")));
+        bridge.clearSent();
+        session.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
+                25580, 7, FrameType.PING, (byte) 0, new byte[0]));
+        assertEquals(FrameType.PONG, bridge.sentFrames().get(0).type());
+        assertEquals(25580, bridge.sentFrames().get(0).sessionId());
+    }
+
+    @Test
+    void mismatchedSessionIdIsRejected() {
+        RouteConfig rt = route();
+        setUp(rt, List.of(rt), new NoopServerStreamFactory());
+        ProtocolException ex = assertThrows(ProtocolException.class,
+                () -> session.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
+                        25581, 0, FrameType.CONFIG_ACK, (byte) 0,
+                        RouteControlPayload.encodeAck(true, "wrong"))));
+        assertTrue(ex.getMessage().contains("unexpected session id"));
+    }
+
+    @Test
     void unexpectedClientControlFramesAreRejected() {
-        setUp(List.of(route()), new NoopServerStreamFactory());
+        setUp(route(), List.of(route()), new NoopServerStreamFactory());
         Frame authOk = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.AUTH_OK, (byte) 0, new byte[0]);
+                25580, 0, FrameType.AUTH_OK, (byte) 0, new byte[0]);
         ProtocolException ex = assertThrows(ProtocolException.class,
                 () -> session.handleInbound(authOk));
         assertTrue(ex.getMessage().contains("unexpected frame"));
@@ -130,12 +163,12 @@ class PlayerTunnelSessionAuthTest {
 
     @Test
     void pingAfterRouteAckTriggersPong() {
-        setUp(List.of(route()), new NoopServerStreamFactory());
+        setUp(route(), List.of(route()), new NoopServerStreamFactory());
         session.sendRouteIfConfigured();
         ack(true);
         bridge.clearSent();
         Frame ping = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 7, FrameType.PING, (byte) 0, new byte[0]);
+                25580, 7, FrameType.PING, (byte) 0, new byte[0]);
         session.handleInbound(ping);
         assertEquals(1, bridge.sentFrames().size());
         assertEquals(FrameType.PONG, bridge.sentFrames().get(0).type());
@@ -144,12 +177,11 @@ class PlayerTunnelSessionAuthTest {
 
     @Test
     void clearRouteClosesStateAndRegistry() {
-        setUp(List.of(route()), new NoopServerStreamFactory());
+        setUp(route(), List.of(route()), new NoopServerStreamFactory());
         session.sendRouteIfConfigured();
         ack(true);
         session.sendRouteClear();
         assertTrue(!session.isRouteActive());
-        assertNull(session.activeRoute());
         assertEquals(0, registry.size());
         assertEquals(FrameType.CONFIG_CLEAR,
                 bridge.sentFrames().get(bridge.sentFrames().size() - 1).type());
@@ -158,11 +190,11 @@ class PlayerTunnelSessionAuthTest {
     @Test
     void openAfterRouteAckDelegatesToFactory() {
         RecordingFactory recording = new RecordingFactory();
-        setUp(List.of(route()), recording);
+        setUp(route(), List.of(route()), recording);
         session.sendRouteIfConfigured();
         ack(true);
         Frame open = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 42, FrameType.OPEN, (byte) 0, new byte[0]);
+                25580, 42, FrameType.OPEN, (byte) 0, new byte[0]);
         session.handleInbound(open);
         assertEquals(1, recording.dialed.size());
         assertEquals(42, recording.dialed.get(0).intValue());

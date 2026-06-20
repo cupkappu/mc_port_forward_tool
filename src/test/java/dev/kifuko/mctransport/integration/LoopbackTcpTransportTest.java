@@ -84,13 +84,13 @@ class LoopbackTcpTransportTest {
         connector = new TargetTcpConnector(10, io);
         streamFactory = new DefaultServerStreamFactory(connector, 4096, 4096, io);
 
-        serverSession = new PlayerTunnelSession(PLAYER, serverBridge, serverCfg,
+        serverSession = new PlayerTunnelSession(PLAYER, route, serverBridge, serverCfg,
                 new RouteStore(Path.of("build/tmp/test-route-store"),
                         "mctransport.server.toml", serverCfg),
                 serverReg, serverBudget, serverRes,
                 connector, 1_700_000_000L, streamFactory);
 
-        clientSession = new ClientTunnelSession(clientBridge, clientReg,
+        clientSession = new ClientTunnelSession(25580, clientBridge, clientReg,
                 (sess, id, mode) -> new DirectClientStream(sess, id, clientBudget, clientRes, 4096),
                 0L);
 

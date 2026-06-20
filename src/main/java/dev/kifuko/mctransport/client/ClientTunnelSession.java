@@ -26,8 +26,9 @@ import java.util.Map;
 public final class ClientTunnelSession {
 
     public static final byte PROTOCOL_VERSION = 1;
-    public static final int SESSION_ID = 0; // MVP uses a single session id per player.
+    public static final int SESSION_ID = 0; // Default for backward compat.
 
+    private final int sessionId;
     private final TunnelBridge bridge;
     private final StreamRegistry registry;
     private final ClientStreamFactory streamFactory;
@@ -41,11 +42,39 @@ public final class ClientTunnelSession {
     private long pingIntervalMillis;
     private long lastPingMillis;
 
+    /** Full constructor with instance session id. */
+    public ClientTunnelSession(int sessionId,
+                               TunnelBridge bridge,
+                               StreamRegistry registry,
+                               ClientStreamFactory streamFactory,
+                               long nowMillis) {
+        this(sessionId, bridge, registry, streamFactory, nowMillis, new NoopListenerController());
+    }
+
+    /** Full constructor with instance session id and listener controller. */
+    public ClientTunnelSession(int sessionId,
+                               TunnelBridge bridge,
+                               StreamRegistry registry,
+                               ClientStreamFactory streamFactory,
+                               long nowMillis,
+                               ClientListenerController listenerController) {
+        if (sessionId < 0 || sessionId > 65535) {
+            throw new IllegalArgumentException("sessionId must be in 1..65535, got: " + sessionId);
+        }
+        this.sessionId = sessionId;
+        this.bridge = bridge;
+        this.registry = registry;
+        this.streamFactory = streamFactory;
+        this.listenerController = listenerController;
+        this.lastInboundMillis = nowMillis;
+        this.lastPingMillis = nowMillis;
+    }
+
     public ClientTunnelSession(TunnelBridge bridge,
                                StreamRegistry registry,
                                ClientStreamFactory streamFactory,
                                long nowMillis) {
-        this(bridge, registry, streamFactory, nowMillis,
+        this(SESSION_ID, bridge, registry, streamFactory, nowMillis,
                 new NoopListenerController());
     }
 
@@ -54,12 +83,11 @@ public final class ClientTunnelSession {
                                ClientStreamFactory streamFactory,
                                long nowMillis,
                                ClientListenerController listenerController) {
-        this.bridge = bridge;
-        this.registry = registry;
-        this.streamFactory = streamFactory;
-        this.listenerController = listenerController;
-        this.lastInboundMillis = nowMillis;
-        this.lastPingMillis = nowMillis;
+        this(SESSION_ID, bridge, registry, streamFactory, nowMillis, listenerController);
+    }
+
+    public int sessionId() {
+        return sessionId;
     }
 
     public boolean isAuthenticated() {
@@ -92,6 +120,10 @@ public final class ClientTunnelSession {
     public void handleInbound(Frame frame) {
         if (frame == null) {
             throw new IllegalArgumentException("frame must not be null");
+        }
+        if (frame.sessionId() != 0 && frame.sessionId() != sessionId) {
+            throw new ProtocolException("unexpected session id " + frame.sessionId()
+                    + " for session " + sessionId);
         }
         lastInboundMillis = System.currentTimeMillis();
         McTransport.LOGGER.debug("client handleInbound: type={} streamId={} payload={}B",
@@ -158,7 +190,7 @@ public final class ClientTunnelSession {
             registry.setState(id, dev.kifuko.mctransport.stream.StreamState.OPEN_SENT);
             ClientStream stream = streamFactory.create(this, id, streamMode);
             streams.put(id, stream);
-            Frame open = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, id,
+            Frame open = Frame.createTrusted(PROTOCOL_VERSION, sessionId, id,
                     FrameType.OPEN, (byte) 0, new byte[0]);
             bridge.send(open);
             return stream;
@@ -181,7 +213,7 @@ public final class ClientTunnelSession {
             return;
         }
         if (nowMillis - lastPingMillis >= pingIntervalMillis) {
-            Frame ping = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
+            Frame ping = Frame.createTrusted(PROTOCOL_VERSION, sessionId, 0,
                     FrameType.PING, (byte) 0, new byte[0]);
             bridge.send(ping);
             lastPingMillis = nowMillis;
@@ -196,7 +228,7 @@ public final class ClientTunnelSession {
     }
 
     private void sendPong(int streamId) {
-        Frame pong = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
+        Frame pong = Frame.createTrusted(PROTOCOL_VERSION, sessionId, streamId,
                 FrameType.PONG, (byte) 0, new byte[0]);
         bridge.send(pong);
     }
@@ -211,7 +243,7 @@ public final class ClientTunnelSession {
             // Unknown stream ID — send RESET so the server cleans up.
             McTransport.LOGGER.debug("client dispatch: unknown stream {}, sending RESET (type={})",
                     streamId, frame.type());
-            Frame reset = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, streamId,
+            Frame reset = Frame.createTrusted(PROTOCOL_VERSION, sessionId, streamId,
                     FrameType.RESET, (byte) 0, new byte[0]);
             bridge.send(reset);
             return;
@@ -236,7 +268,7 @@ public final class ClientTunnelSession {
     }
 
     private void sendConfigAck(boolean ok, String message) {
-        Frame ack = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
+        Frame ack = Frame.createTrusted(PROTOCOL_VERSION, sessionId, 0,
                 FrameType.CONFIG_ACK, (byte) 0,
                 RouteControlPayload.encodeAck(ok, message));
         bridge.send(ack);

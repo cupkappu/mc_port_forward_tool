@@ -153,7 +153,7 @@ public final class DirectClientStream implements ClientStream {
         byte[] body = new byte[length];
         System.arraycopy(src, 0, body, 0, length);
         Frame f = Frame.create(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.DATA,
+                session.sessionId(), streamId, FrameType.DATA,
                 (byte) 0, body, maxPayloadSize);
         session.bridge().send(f);
     }
@@ -163,7 +163,7 @@ public final class DirectClientStream implements ClientStream {
             return;
         }
         Frame f = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.CLOSE,
+                session.sessionId(), streamId, FrameType.CLOSE,
                 (byte) 0, new byte[0]);
         session.bridge().send(f);
     }
@@ -173,7 +173,7 @@ public final class DirectClientStream implements ClientStream {
             return;
         }
         Frame f = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.RESET,
+                session.sessionId(), streamId, FrameType.RESET,
                 (byte) 0, new byte[0]);
         session.bridge().send(f);
     }
@@ -224,7 +224,7 @@ public final class DirectClientStream implements ClientStream {
             return;
         }
         Frame f = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.CLOSE,
+                session.sessionId(), streamId, FrameType.CLOSE,
                 (byte) 0, new byte[0]);
         session.bridge().send(f);
         cleanup();
@@ -235,7 +235,7 @@ public final class DirectClientStream implements ClientStream {
             return;
         }
         Frame f = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                ClientTunnelSession.SESSION_ID, streamId, FrameType.RESET,
+                session.sessionId(), streamId, FrameType.RESET,
                 (byte) 0, new byte[0]);
         session.bridge().send(f);
         cleanup();

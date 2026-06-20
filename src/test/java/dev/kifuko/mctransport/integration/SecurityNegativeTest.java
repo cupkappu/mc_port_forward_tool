@@ -35,7 +35,10 @@ class SecurityNegativeTest {
                 8, 1024, 8192L, 300, 10, "info");
         FakeTunnelBridge bridge = new FakeTunnelBridge();
         bridge.setReceiver(frame -> { });
-        return new PlayerTunnelSession(PLAYER, bridge, cfg,
+        RouteConfig firstRoute = routes.isEmpty()
+                ? new RouteConfig(PLAYER, "Steve", 25580, "127.0.0.1", 10000)
+                : routes.get(0);
+        return new PlayerTunnelSession(PLAYER, firstRoute, bridge, cfg,
                 new RouteStore(Path.of("build/tmp/test-route-store"),
                         "mctransport.server.toml", cfg),
                 new StreamRegistry(8, false),
@@ -52,7 +55,7 @@ class SecurityNegativeTest {
     void openWithoutConfiguredRouteIsRejected() {
         PlayerTunnelSession session = buildSession(List.of());
         Frame open = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 1, FrameType.OPEN, (byte) 0, new byte[0]);
+                25580, 1, FrameType.OPEN, (byte) 0, new byte[0]);
         ProtocolException ex = assertThrows(ProtocolException.class,
                 () -> session.handleInbound(open));
         assertTrue(ex.getMessage().contains("before route is active"));
@@ -63,7 +66,7 @@ class SecurityNegativeTest {
         PlayerTunnelSession session = buildSession(List.of(route()));
         session.sendRouteIfConfigured();
         Frame open = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 1, FrameType.OPEN, (byte) 0, new byte[0]);
+                25580, 1, FrameType.OPEN, (byte) 0, new byte[0]);
         ProtocolException ex = assertThrows(ProtocolException.class,
                 () -> session.handleInbound(open));
         assertTrue(ex.getMessage().contains("before route is active"));
@@ -74,10 +77,10 @@ class SecurityNegativeTest {
         PlayerTunnelSession session = buildSession(List.of(route()));
         session.sendRouteIfConfigured();
         session.handleInbound(Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.CONFIG_ACK, (byte) 0,
+                25580, 0, FrameType.CONFIG_ACK, (byte) 0,
                 RouteControlPayload.encodeAck(false, "bind failed")));
         Frame open = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 1, FrameType.OPEN, (byte) 0, new byte[0]);
+                25580, 1, FrameType.OPEN, (byte) 0, new byte[0]);
         assertThrows(ProtocolException.class, () -> session.handleInbound(open));
     }
 
@@ -85,7 +88,7 @@ class SecurityNegativeTest {
     void clientCannotForgeServerConfigFrames() {
         PlayerTunnelSession session = buildSession(List.of(route()));
         Frame forged = Frame.createTrusted(PlayerTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.CONFIG_APPLY, (byte) 0,
+                25580, 0, FrameType.CONFIG_APPLY, (byte) 0,
                 RouteControlPayload.encodeApply("127.0.0.1", 25580));
         ProtocolException ex = assertThrows(ProtocolException.class,
                 () -> session.handleInbound(forged));
