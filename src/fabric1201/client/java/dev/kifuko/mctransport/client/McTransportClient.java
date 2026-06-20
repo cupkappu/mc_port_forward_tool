@@ -1,6 +1,7 @@
 package dev.kifuko.mctransport.client;
 
 import dev.kifuko.mctransport.McTransport;
+import dev.kifuko.mctransport.kcp.KcpConfig;
 import dev.kifuko.mctransport.net.TransportExecutors;
 import dev.kifuko.mctransport.protocol.FrameCodec;
 import dev.kifuko.mctransport.stream.StreamRegistry;
@@ -70,11 +71,12 @@ public final class McTransportClient implements ClientModInitializer {
             ClientTunnelSession tunnelSession = new ClientTunnelSession(
                     bridge,
                     registry,
-                    (sess, id, mode) -> new DirectClientStream(sess, id,
+                    new DefaultClientStreamFactory(
                             new dev.kifuko.mctransport.buffer.BufferBudget(
                                     DEFAULT_STREAM_BUFFER_SIZE, DEFAULT_GLOBAL_BUFFER_SIZE),
                             new dev.kifuko.mctransport.buffer.ReservationState(),
-                            DEFAULT_STREAM_BUFFER_SIZE),
+                            DEFAULT_STREAM_BUFFER_SIZE,
+                            new dev.kifuko.mctransport.kcp.KcpConfig()),
                     System.currentTimeMillis(),
                     controller);
             session.set(tunnelSession);
