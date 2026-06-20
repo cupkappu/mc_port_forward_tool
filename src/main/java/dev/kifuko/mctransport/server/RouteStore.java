@@ -39,8 +39,8 @@ public final class RouteStore {
     }
 
     /**
-     * Replaces (or adds) the route for {@code route.getPlayerUuid()} and
-     * persists the new snapshot.
+     * Replaces (or adds) the route for the (playerUuid, listenPort) key
+     * and persists the new snapshot.
      */
     public synchronized void setRoute(RouteConfig route) {
         ServerConfig next = current.withRoute(route);
@@ -52,10 +52,10 @@ public final class RouteStore {
      * Removes the route for {@code uuid} if present and persists the new
      * snapshot.
      *
-     * @return true when the route existed and was removed.
+     * @return true when at least one route existed and was removed.
      */
     public synchronized boolean removeRoute(UUID uuid) {
-        if (current.routeFor(uuid) == null) {
+        if (uuid == null || current.routesFor(uuid).isEmpty()) {
             return false;
         }
         ServerConfig next = current.withoutRoute(uuid);
