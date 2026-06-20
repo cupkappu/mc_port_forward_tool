@@ -3,6 +3,7 @@ package dev.kifuko.mctransport.stream;
 import dev.kifuko.mctransport.buffer.BufferBudget;
 import dev.kifuko.mctransport.buffer.ReservationState;
 import dev.kifuko.mctransport.client.ClientStream;
+import dev.kifuko.mctransport.client.DirectClientStream;
 import dev.kifuko.mctransport.client.ClientTunnelSession;
 import dev.kifuko.mctransport.net.FakeTunnelBridge;
 import dev.kifuko.mctransport.protocol.Frame;
@@ -48,7 +49,7 @@ class CloseResetSemanticsTest {
         ReservationState res = new ReservationState();
         budget.reserve(1, 500, res);
         ClientTunnelSession session = newSession(b, budget, res);
-        ClientStream s = new ClientStream(session, 1, budget, res, 1024);
+        ClientStream s = new DirectClientStream(session, 1, budget, res, 1024);
         s.closeClean();
         assertEquals(0L, budget.globalReserved());
     }
@@ -81,7 +82,7 @@ class CloseResetSemanticsTest {
                                 java.util.concurrent.Executors.newSingleThreadExecutor()),
                         0L,
                         new dev.kifuko.mctransport.server.NoopServerStreamFactoryForTest());
-        dev.kifuko.mctransport.server.ServerStream ss = new dev.kifuko.mctransport.server.ServerStream(
+        dev.kifuko.mctransport.server.DirectServerStream ss = new dev.kifuko.mctransport.server.DirectServerStream(
                 playerSession, 1, sock, budget, res, (byte) 1, 1024);
         ss.closeClean();
         assertEquals(1, b.sentFrames().size());
@@ -108,7 +109,7 @@ class CloseResetSemanticsTest {
         BufferBudget budget = new BufferBudget(1024, 8192L);
         ReservationState res = new ReservationState();
         ClientTunnelSession session = newSession(b, budget, res);
-        return new ClientStream(session, streamId, budget, res, 1024);
+        return new DirectClientStream(session, streamId, budget, res, 1024);
     }
 
     private ClientTunnelSession newSession(FakeTunnelBridge b,
@@ -116,7 +117,7 @@ class CloseResetSemanticsTest {
                                            ReservationState res) {
         return new ClientTunnelSession(b,
                 new StreamRegistry(8, true),
-                (sess, id) -> new ClientStream(sess, id, budget, res, 1024),
+                (sess, id, mode) -> new DirectClientStream(sess, id, budget, res, 1024),
                 0L);
     }
 }

@@ -1,5 +1,8 @@
 package dev.kifuko.mctransport.server;
 
+import dev.kifuko.mctransport.kcp.KcpConfig;
+import dev.kifuko.mctransport.protocol.StreamMode;
+
 import java.io.IOException;
 import java.net.Socket;
 import java.util.HashMap;
@@ -10,6 +13,9 @@ import java.util.concurrent.ExecutorService;
  * Default {@link ServerStreamFactory}: keeps an in-memory map of active
  * streams per session and dials the route's target via
  * {@link TargetTcpConnector} on {@code OPEN}.
+ *
+ * <p>Supports both {@link StreamMode#DIRECT} and {@link StreamMode#KCP}
+ * stream creation.</p>
  */
 public final class DefaultServerStreamFactory implements ServerStreamFactory {
 
@@ -17,18 +23,29 @@ public final class DefaultServerStreamFactory implements ServerStreamFactory {
     private final int maxPayloadSize;
     private final int readChunkSize;
     private final ExecutorService io;
+    private final KcpConfig kcpConfig;
     private final Map<PlayerTunnelSession, Map<Integer, ServerStream>> streams = new HashMap<>();
 
+    /** Full constructor with KCP support. */
     public DefaultServerStreamFactory(TargetTcpConnector connector, int maxPayloadSize,
-                                      int readChunkSize, ExecutorService io) {
+                                      int readChunkSize, ExecutorService io,
+                                      KcpConfig kcpConfig) {
         this.connector = connector;
         this.maxPayloadSize = maxPayloadSize;
         this.readChunkSize = readChunkSize;
         this.io = io;
+        this.kcpConfig = kcpConfig != null ? kcpConfig : new KcpConfig();
+    }
+
+    /** Backward-compat constructor. KCP mode not available. */
+    public DefaultServerStreamFactory(TargetTcpConnector connector, int maxPayloadSize,
+                                      int readChunkSize, ExecutorService io) {
+        this(connector, maxPayloadSize, readChunkSize, io, new KcpConfig());
     }
 
     @Override
-    public synchronized void dialAndAttach(PlayerTunnelSession session, int streamId) {
+    public synchronized void dialAndAttach(PlayerTunnelSession session, int streamId,
+                                           StreamMode mode) {
         var route = session.activeRoute();
         if (route == null) {
             sendReset(session, streamId);
@@ -42,10 +59,14 @@ public final class DefaultServerStreamFactory implements ServerStreamFactory {
             return;
         }
         session.registry().registerServer(streamId);
-        ServerStream stream = new ServerStream(
-                session, streamId, socket,
-                session.budget(), session.reservations(),
-                PlayerTunnelSession.PROTOCOL_VERSION, maxPayloadSize);
+        ServerStream stream = switch (mode) {
+            case KCP -> new KcpServerStream(session, streamId, socket,
+                    session.budget(), session.reservations(),
+                    kcpConfig, PlayerTunnelSession.PROTOCOL_VERSION);
+            case DIRECT -> new DirectServerStream(session, streamId, socket,
+                    session.budget(), session.reservations(),
+                    PlayerTunnelSession.PROTOCOL_VERSION, maxPayloadSize);
+        };
         streams.computeIfAbsent(session, s -> new HashMap<>()).put(streamId, stream);
         if (io != null) {
             ServerStreamReader reader = new ServerStreamReader(stream, readChunkSize, io);

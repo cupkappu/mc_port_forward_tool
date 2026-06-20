@@ -201,7 +201,8 @@ public final class PlayerTunnelSession {
         activeRoute = route;
         Frame f = Frame.createTrusted(PROTOCOL_VERSION, SESSION_ID, 0,
                 FrameType.CONFIG_APPLY, (byte) 0,
-                RouteControlPayload.encodeApply(route.getListenHost(), route.getListenPort()));
+                RouteControlPayload.encodeApply(route.getListenHost(),
+                        route.getListenPort(), route.getMode()));
         bridge.send(f);
     }
 
@@ -227,7 +228,7 @@ public final class PlayerTunnelSession {
             sendError(streamId, "max streams reached");
             return;
         }
-        streamFactory.dialAndAttach(this, streamId);
+        streamFactory.dialAndAttach(this, streamId, activeRoute.getMode());
     }
 
     private void dispatchToStream(Frame frame) {

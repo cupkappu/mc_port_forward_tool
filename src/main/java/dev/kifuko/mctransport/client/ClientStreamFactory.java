@@ -1,5 +1,7 @@
 package dev.kifuko.mctransport.client;
 
+import dev.kifuko.mctransport.protocol.StreamMode;
+
 /**
  * Strategy the client session uses to materialize {@link ClientStream}
  * objects when a new local TCP socket is accepted.
@@ -11,5 +13,5 @@ public interface ClientStreamFactory {
      * up by the local TCP listener later via
      * {@link ClientStream#attach(java.net.Socket, byte[])}.
      */
-    ClientStream create(ClientTunnelSession session, int streamId);
+    ClientStream create(ClientTunnelSession session, int streamId, StreamMode mode);
 }

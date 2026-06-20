@@ -70,7 +70,7 @@ public final class McTransportClient implements ClientModInitializer {
             ClientTunnelSession tunnelSession = new ClientTunnelSession(
                     bridge,
                     registry,
-                    (sess, id) -> new ClientStream(sess, id,
+                    (sess, id, mode) -> new DirectClientStream(sess, id,
                             new dev.kifuko.mctransport.buffer.BufferBudget(
                                     DEFAULT_STREAM_BUFFER_SIZE, DEFAULT_GLOBAL_BUFFER_SIZE),
                             new dev.kifuko.mctransport.buffer.ReservationState(),

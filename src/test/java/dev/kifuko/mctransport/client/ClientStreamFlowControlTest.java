@@ -17,11 +17,11 @@ class ClientStreamFlowControlTest {
         bridge.setReceiver(frame -> {});
         StreamRegistry registry = new StreamRegistry(16, true);
         ClientTunnelSession session = new ClientTunnelSession(bridge, registry,
-                (sess, id) -> null, 0L);
+                (sess, id, mode) -> null, 0L);
 
         BufferBudget budget = new BufferBudget(8, 8);
         ReservationState reservations = new ReservationState();
-        ClientStream stream = new ClientStream(session, 99, budget, reservations, 8);
+        ClientStream stream = new DirectClientStream(session, 99, budget, reservations, 8);
 
         // Pre-fill budget
         budget.reserve(99, 8, reservations);
@@ -37,11 +37,11 @@ class ClientStreamFlowControlTest {
         bridge.setReceiver(frame -> {});
         StreamRegistry registry = new StreamRegistry(16, true);
         ClientTunnelSession session = new ClientTunnelSession(bridge, registry,
-                (sess, id) -> null, 0L);
+                (sess, id, mode) -> null, 0L);
 
         BufferBudget budget = new BufferBudget(1024, 4096);
         ReservationState reservations = new ReservationState();
-        ClientStream stream = new ClientStream(session, 99, budget, reservations, 1024);
+        ClientStream stream = new DirectClientStream(session, 99, budget, reservations, 1024);
 
         assertTrue(stream.reserveOrWait(4));
     }

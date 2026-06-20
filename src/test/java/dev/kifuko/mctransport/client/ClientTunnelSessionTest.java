@@ -5,6 +5,7 @@ import dev.kifuko.mctransport.protocol.Frame;
 import dev.kifuko.mctransport.protocol.FrameType;
 import dev.kifuko.mctransport.protocol.ProtocolException;
 import dev.kifuko.mctransport.protocol.RouteControlPayload;
+import dev.kifuko.mctransport.protocol.StreamMode;
 import dev.kifuko.mctransport.stream.StreamRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -41,7 +42,7 @@ class ClientTunnelSessionTest {
     void configApplyStartsListenerAndSendsAck() {
         FakeTunnelBridge b = buildBridge();
         FakeListenerController listener = new FakeListenerController();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null, listener);
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null, listener);
         s.handleInbound(configApply(25580));
 
         assertTrue(s.isAuthenticated());
@@ -58,7 +59,7 @@ class ClientTunnelSessionTest {
         FakeTunnelBridge b = buildBridge();
         FakeListenerController listener = new FakeListenerController();
         listener.failApply = true;
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null, listener);
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null, listener);
         s.handleInbound(configApply(25580));
 
         assertFalse(s.isAuthenticated());
@@ -72,7 +73,7 @@ class ClientTunnelSessionTest {
     @Test
     void openLocalStreamBeforeConfigApplyFails() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null,
                 new FakeListenerController());
         assertThrows(IllegalStateException.class, s::openLocalStream);
     }
@@ -116,7 +117,7 @@ class ClientTunnelSessionTest {
     @Test
     void pingBeforeConfigApplyIsRejected() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null,
                 new FakeListenerController());
         Frame ping = Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
                 0, 0, FrameType.PING, (byte) 0, new byte[0]);
@@ -126,7 +127,7 @@ class ClientTunnelSessionTest {
     @Test
     void pingAfterConfigApplyTriggersPong() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null,
                 new FakeListenerController());
         s.handleInbound(configApply(25580));
         b.clearSent();
@@ -140,7 +141,7 @@ class ClientTunnelSessionTest {
     @Test
     void dataForUnknownStreamSendsReset() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null,
                 new FakeListenerController());
         s.handleInbound(configApply(25580));
         b.clearSent();
@@ -154,7 +155,7 @@ class ClientTunnelSessionTest {
     @Test
     void tickBeforeConfigApplyDoesNothing() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null,
                 new FakeListenerController());
         s.setPingIntervalMillis(10);
         s.tick(10_000L);
@@ -164,7 +165,7 @@ class ClientTunnelSessionTest {
     @Test
     void tickAfterConfigApplySendsPingAfterInterval() {
         FakeTunnelBridge b = buildBridge();
-        ClientTunnelSession s = buildSession(b, (sess, id) -> null,
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null,
                 new FakeListenerController());
         s.setPingIntervalMillis(100);
         s.handleInbound(configApply(25580));
@@ -221,8 +222,8 @@ class ClientTunnelSessionTest {
 
     private static final class FakeFactory implements ClientStreamFactory {
         final java.util.List<ClientStream> created = new java.util.ArrayList<>();
-        @Override public ClientStream create(ClientTunnelSession session, int streamId) {
-            ClientStream s = new ClientStream(session, streamId,
+        @Override public ClientStream create(ClientTunnelSession session, int streamId, StreamMode mode) {
+            ClientStream s = new DirectClientStream(session, streamId,
                     new dev.kifuko.mctransport.buffer.BufferBudget(1024, 8192L),
                     new dev.kifuko.mctransport.buffer.ReservationState(),
                     1024);

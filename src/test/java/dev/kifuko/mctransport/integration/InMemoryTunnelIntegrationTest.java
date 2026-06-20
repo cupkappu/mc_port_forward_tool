@@ -3,6 +3,7 @@ package dev.kifuko.mctransport.integration;
 import dev.kifuko.mctransport.buffer.BufferBudget;
 import dev.kifuko.mctransport.buffer.ReservationState;
 import dev.kifuko.mctransport.client.ClientStream;
+import dev.kifuko.mctransport.client.DirectClientStream;
 import dev.kifuko.mctransport.client.ClientTunnelSession;
 import dev.kifuko.mctransport.config.RouteConfig;
 import dev.kifuko.mctransport.config.ServerConfig;
@@ -91,7 +92,7 @@ class InMemoryTunnelIntegrationTest {
                 connector, 1_700_000_000L, streamFactory);
 
         clientSession = new ClientTunnelSession(clientBridge, clientRegistry,
-                (sess, id) -> new ClientStream(sess, id, clientBudget, clientRes, 4096),
+                (sess, id, mode) -> new DirectClientStream(sess, id, clientBudget, clientRes, 4096),
                 0L);
 
         // Wire receivers only after both sessions exist.

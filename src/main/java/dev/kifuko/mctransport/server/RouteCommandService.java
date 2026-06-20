@@ -2,6 +2,7 @@ package dev.kifuko.mctransport.server;
 
 import dev.kifuko.mctransport.config.RouteConfig;
 import dev.kifuko.mctransport.config.ServerConfig;
+import dev.kifuko.mctransport.protocol.StreamMode;
 
 import java.util.List;
 import java.util.UUID;
@@ -23,13 +24,19 @@ public final class RouteCommandService {
 
     public String setRoute(UUID uuid, String playerName, int listenPort,
                            String targetHost, int targetPort) {
+        return setRoute(uuid, playerName, listenPort, targetHost, targetPort, StreamMode.DIRECT);
+    }
+
+    public String setRoute(UUID uuid, String playerName, int listenPort,
+                           String targetHost, int targetPort, StreamMode mode) {
         RouteConfig route = new RouteConfig(uuid, playerName,
-                listenPort, targetHost, targetPort);
+                listenPort, targetHost, targetPort, mode);
         store.setRoute(route);
         applier.apply(uuid);
         return "Set route for " + route.getPlayerName() + " (" + uuid + "): "
                 + route.getListenHost() + ":" + route.getListenPort()
-                + " -> " + route.getTargetHost() + ":" + route.getTargetPort();
+                + " -> " + route.getTargetHost() + ":" + route.getTargetPort()
+                + " (mode=" + route.getMode() + ")";
     }
 
     public String unsetRoute(UUID uuid, String playerName) {
