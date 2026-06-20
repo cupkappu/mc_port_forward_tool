@@ -26,6 +26,7 @@ public final class ClientStream {
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private volatile Socket localSocket;
     private volatile Thread readThread;
+    private byte[] readBuffer;
 
     public ClientStream(ClientTunnelSession session,
                         int streamId,
@@ -78,6 +79,7 @@ public final class ClientStream {
             throw new IllegalArgumentException("readBuffer must be non-empty");
         }
         this.localSocket = socket;
+        this.readBuffer = readBuffer;
         Thread t = new Thread(this::drainLocalReads, "mctransport-client-read-" + streamId);
         t.setDaemon(true);
         this.readThread = t;
@@ -89,7 +91,7 @@ public final class ClientStream {
         if (sock == null) {
             return;
         }
-        byte[] buf = new byte[maxPayloadSize];
+        byte[] buf = this.readBuffer;
         try {
             InputStream in = sock.getInputStream();
             while (!closed.get()) {
@@ -105,6 +107,7 @@ public final class ClientStream {
                     break;
                 }
                 sendData(buf, n);
+                budget.release(streamId, n, reservations);
             }
         } catch (IOException e) {
             sendReset();
@@ -233,6 +236,7 @@ public final class ClientStream {
 
     private void cleanup() {
         budget.releaseAll(streamId, reservations);
+        readBuffer = null;
         Socket sock = localSocket;
         localSocket = null;
         if (sock != null) {

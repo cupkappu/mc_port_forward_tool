@@ -110,8 +110,9 @@ public final class ServerStream {
 
     /**
      * Sends a {@code DATA} frame built from target socket bytes. Reserves
-     * buffer budget first; on reservation failure the current chunk is kept
-     * and retried, which pauses the target reader without losing bytes.
+     * buffer budget first as a burst limiter; releases it immediately after
+     * the synchronous {@code bridge.send} so unidirectional flows cannot
+     * deadlock the budget.
      */
     public void sendTargetBytes(byte[] chunk, int length) {
         if (closed.get() || length <= 0) {
@@ -124,6 +125,7 @@ public final class ServerStream {
                 FrameType.DATA, (byte) 0,
                 java.util.Arrays.copyOf(chunk, length), maxPayloadSize);
         session.bridge().send(f);
+        budget.release(streamId, length, reservations);
     }
 
     private boolean reserveOrWait(int bytes) {

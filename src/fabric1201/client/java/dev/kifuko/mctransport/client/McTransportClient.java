@@ -96,12 +96,6 @@ public final class McTransportClient implements ClientModInitializer {
                 if (activeSession != null) {
                     activeSession.close();
                 }
-                if (bridge != null) {
-                    bridge.close();
-                }
-                if (executors != null) {
-                    executors.shutdown();
-                }
             });
             registerE2eQuickJoinIfRequested();
         } catch (RuntimeException e) {
