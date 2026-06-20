@@ -136,4 +136,58 @@ class ConfigLoaderTest {
                 "legacy config must be rejected: " + ex.getMessage());
     }
 
+    @Test
+    void loadServerReadsSamePlayerOnDifferentListenPorts(@TempDir Path tmp) throws Exception {
+        Path configDir = tmp.resolve("config");
+        Files.createDirectories(configDir);
+        Files.writeString(configDir.resolve("mctransport.server.toml"),
+                "enabled = true\n"
+                + "channel_name = \"mctransport:main\"\n"
+                + "max_streams_per_player = 64\n"
+                + "stream_buffer_size = 1048576\n"
+                + "global_buffer_size_per_player = 33554432\n"
+                + "idle_timeout_seconds = 300\n"
+                + "connect_timeout_seconds = 10\n"
+                + "log_level = \"info\"\n"
+                + "\n"
+                + "[[routes]]\n"
+                + "player_uuid = \"11111111-2222-3333-4444-555555555555\"\n"
+                + "player_name = \"Steve\"\n"
+                + "listen_port = 25580\n"
+                + "target_host = \"127.0.0.1\"\n"
+                + "target_port = 10000\n"
+                + "\n"
+                + "[[routes]]\n"
+                + "player_uuid = \"11111111-2222-3333-4444-555555555555\"\n"
+                + "player_name = \"Steve\"\n"
+                + "listen_port = 25581\n"
+                + "target_host = \"10.0.0.5\"\n"
+                + "target_port = 25565\n",
+                StandardCharsets.UTF_8);
+
+        ServerConfig cfg = ConfigLoader.loadServer(configDir, "mctransport.server.toml", SERVER_RESOURCE);
+        UUID uuid = UUID.fromString("11111111-2222-3333-4444-555555555555");
+
+        assertEquals(2, cfg.routesFor(uuid).size());
+        assertEquals(10000, cfg.routeFor(uuid, 25580).getTargetPort());
+        assertEquals(25565, cfg.routeFor(uuid, 25581).getTargetPort());
+    }
+
+    @Test
+    void writeServerPersistsSamePlayerOnDifferentListenPorts(@TempDir Path tmp) throws Exception {
+        UUID uuid = UUID.fromString("11111111-2222-3333-4444-555555555555");
+        RouteConfig routeA = new RouteConfig(uuid, "Steve", 25580, "127.0.0.1", 10000);
+        RouteConfig routeB = new RouteConfig(uuid, "Steve", 25581, "10.0.0.5", 25565);
+        ServerConfig config = new ServerConfig(true, "mctransport:main",
+                List.of(routeA, routeB),
+                64, 1024, 8192L, 300, 10, "info");
+
+        ConfigLoader.writeServer(tmp, "mctransport.server.toml", config);
+        ServerConfig reloaded = ConfigLoader.loadServer(tmp, "mctransport.server.toml", SERVER_RESOURCE);
+
+        assertEquals(2, reloaded.routesFor(uuid).size());
+        assertEquals("127.0.0.1", reloaded.routeFor(uuid, 25580).getTargetHost());
+        assertEquals("10.0.0.5", reloaded.routeFor(uuid, 25581).getTargetHost());
+    }
+
 }

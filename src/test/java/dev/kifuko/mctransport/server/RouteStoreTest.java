@@ -12,6 +12,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,19 +31,62 @@ class RouteStoreTest {
     }
 
     @Test
-    void setRouteReplacesExistingUuid(@TempDir Path tmp) {
+    void setRouteAddsSecondPortForSameUuid(@TempDir Path tmp) {
         RouteStore store = new RouteStore(tmp, "mctransport.server.toml",
                 config(List.of(route("Steve", 25580, 10000))));
-        store.setRoute(route("Steve2", 25581, 10001));
+
+        store.setRoute(route("Steve", 25581, 10001));
 
         assertEquals(2, store.routes().size());
+        assertEquals(10000, store.routeFor(UUID_A, 25580).getTargetPort());
+        assertEquals(10001, store.routeFor(UUID_A, 25581).getTargetPort());
     }
 
     @Test
-    void removeRouteReturnsFalseWhenMissing(@TempDir Path tmp) {
+    void removeRouteRemovesOnlyRequestedPort(@TempDir Path tmp) {
+        RouteStore store = new RouteStore(tmp, "mctransport.server.toml",
+                config(List.of(
+                        route("Steve", 25580, 10000),
+                        route("Steve", 25581, 10001))));
+
+        assertTrue(store.removeRoute(UUID_A, 25580));
+
+        assertNull(store.routeFor(UUID_A, 25580));
+        assertEquals(25581, store.routeFor(UUID_A, 25581).getListenPort());
+        assertEquals(1, store.routesFor(UUID_A).size());
+    }
+
+    @Test
+    void removeRouteByUuidReturnsFalseWhenMissing(@TempDir Path tmp) {
         RouteStore store = new RouteStore(tmp, "mctransport.server.toml",
                 config(List.of()));
         assertFalse(store.removeRoute(UUID_A));
+    }
+
+    @Test
+    void removeRouteByPortReturnsFalseWhenMissing(@TempDir Path tmp) {
+        RouteStore store = new RouteStore(tmp, "mctransport.server.toml",
+                config(List.of()));
+
+        assertFalse(store.removeRoute(UUID_A, 25580));
+    }
+
+    @Test
+    void routeForByPortReturnsNullWhenMissing(@TempDir Path tmp) {
+        RouteStore store = new RouteStore(tmp, "mctransport.server.toml",
+                config(List.of()));
+
+        assertNull(store.routeFor(UUID_A, 25580));
+        assertNull(store.routeFor(null, 25580));
+    }
+
+    @Test
+    void routesForReturnsEmptyListForUnknownUuid(@TempDir Path tmp) {
+        RouteStore store = new RouteStore(tmp, "mctransport.server.toml",
+                config(List.of()));
+
+        assertTrue(store.routesFor(UUID_A).isEmpty());
+        assertTrue(store.routesFor(null).isEmpty());
     }
 
     @Test

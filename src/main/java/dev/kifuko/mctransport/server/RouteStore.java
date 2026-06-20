@@ -48,17 +48,41 @@ public final class RouteStore {
         current = next;
     }
 
+    /** Returns the route configured for {@code uuid} and {@code listenPort} or {@code null}. */
+    public synchronized RouteConfig routeFor(UUID uuid, int listenPort) {
+        if (uuid == null) return null;
+        return current.routeFor(uuid, listenPort);
+    }
+
+    /** Returns all routes configured for {@code uuid} or an empty list. */
+    public synchronized List<RouteConfig> routesFor(UUID uuid) {
+        if (uuid == null) return List.of();
+        return List.copyOf(current.routesFor(uuid));
+    }
+
     /**
-     * Removes the route for {@code uuid} if present and persists the new
+     * Removes all routes for {@code uuid} if present and persists the new
      * snapshot.
      *
      * @return true when at least one route existed and was removed.
      */
     public synchronized boolean removeRoute(UUID uuid) {
-        if (uuid == null || current.routesFor(uuid).isEmpty()) {
-            return false;
-        }
+        if (uuid == null || current.routesFor(uuid).isEmpty()) return false;
         ServerConfig next = current.withoutRoute(uuid);
+        save(next);
+        current = next;
+        return true;
+    }
+
+    /**
+     * Removes the route for {@code (uuid, listenPort)} if present and
+     * persists the new snapshot.
+     *
+     * @return true when the route existed and was removed.
+     */
+    public synchronized boolean removeRoute(UUID uuid, int listenPort) {
+        if (current.routeFor(uuid, listenPort) == null) return false;
+        ServerConfig next = current.withoutRoute(uuid, listenPort);
         save(next);
         current = next;
         return true;
