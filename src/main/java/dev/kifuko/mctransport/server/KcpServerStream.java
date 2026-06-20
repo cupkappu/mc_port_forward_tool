@@ -164,7 +164,8 @@ public final class KcpServerStream implements ServerStream {
     }
 
     private void sendFrame(FrameType type) {
-        Frame f = Frame.createTrusted(protocolVersion, 0, streamId, type, (byte) 0, new byte[0]);
+        Frame f = Frame.createTrusted(protocolVersion, session.sessionId(), streamId,
+                type, (byte) 0, new byte[0]);
         session.bridge().send(f);
     }
 
@@ -216,7 +217,7 @@ public final class KcpServerStream implements ServerStream {
         public void out(ByteBuffer data, KcpCore kcp) {
             byte[] bytes = new byte[data.remaining()];
             data.get(bytes);
-            Frame f = Frame.create(protocolVersion, 0, streamId,
+            Frame f = Frame.create(protocolVersion, session.sessionId(), streamId,
                     FrameType.DATA, (byte) 0, bytes, maxKcpFramePayloadSize);
             enqueueKcpFrame(f);
         }

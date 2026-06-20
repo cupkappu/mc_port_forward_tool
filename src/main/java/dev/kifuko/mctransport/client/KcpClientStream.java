@@ -116,6 +116,10 @@ public final class KcpClientStream implements ClientStream {
             }
         } catch (IOException e) {
             sendReset();
+        } catch (IllegalStateException e) {
+            LOG.log(Level.FINE, "client kcp stream " + streamId
+                    + " closing after buffer budget exhaustion", e);
+            sendReset();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {

@@ -113,7 +113,7 @@ public final class DirectServerStream implements ServerStream {
     public Frame buildDataFrame(byte[] chunk, int length) {
         byte[] body = new byte[length];
         System.arraycopy(chunk, 0, body, 0, length);
-        return Frame.create(protocolVersion, 0, streamId,
+        return Frame.create(protocolVersion, session.sessionId(), streamId,
                 FrameType.DATA, (byte) 0, body, maxPayloadSize);
     }
 
@@ -138,7 +138,7 @@ public final class DirectServerStream implements ServerStream {
             Thread.currentThread().interrupt();
             return;
         }
-        Frame f = Frame.create(protocolVersion, 0, streamId,
+        Frame f = Frame.create(protocolVersion, session.sessionId(), streamId,
                 FrameType.DATA, (byte) 0,
                 java.util.Arrays.copyOf(chunk, length), maxPayloadSize);
         session.bridge().send(f);
@@ -173,7 +173,7 @@ public final class DirectServerStream implements ServerStream {
         if (closed.get()) {
             return;
         }
-        Frame f = Frame.createTrusted(protocolVersion, 0, streamId,
+        Frame f = Frame.createTrusted(protocolVersion, session.sessionId(), streamId,
                 FrameType.CLOSE, (byte) 0, new byte[0]);
         session.bridge().send(f);
     }
@@ -183,7 +183,7 @@ public final class DirectServerStream implements ServerStream {
         if (closed.get()) {
             return;
         }
-        Frame f = Frame.createTrusted(protocolVersion, 0, streamId,
+        Frame f = Frame.createTrusted(protocolVersion, session.sessionId(), streamId,
                 FrameType.RESET, (byte) 0, new byte[0]);
         session.bridge().send(f);
     }
@@ -193,7 +193,7 @@ public final class DirectServerStream implements ServerStream {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        Frame f = Frame.createTrusted(protocolVersion, 0, streamId,
+        Frame f = Frame.createTrusted(protocolVersion, session.sessionId(), streamId,
                 FrameType.CLOSE, (byte) 0, new byte[0]);
         session.bridge().send(f);
         closeResources();
@@ -204,7 +204,7 @@ public final class DirectServerStream implements ServerStream {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        Frame f = Frame.createTrusted(protocolVersion, 0, streamId,
+        Frame f = Frame.createTrusted(protocolVersion, session.sessionId(), streamId,
                 FrameType.RESET, (byte) 0, new byte[0]);
         session.bridge().send(f);
         closeResources();
