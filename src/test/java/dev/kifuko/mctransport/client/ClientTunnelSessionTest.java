@@ -23,7 +23,7 @@ class ClientTunnelSessionTest {
                                              ClientStreamFactory factory,
                                              FakeListenerController listener) {
         StreamRegistry registry = new StreamRegistry(8, true);
-        return new ClientTunnelSession(bridge, registry, factory, 0L, listener);
+        return new ClientTunnelSession(25580, bridge, registry, factory, 0L, listener);
     }
 
     private FakeTunnelBridge buildBridge() {
@@ -34,7 +34,7 @@ class ClientTunnelSessionTest {
 
     private Frame configApply(int port) {
         return Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
-                0, 0, FrameType.CONFIG_APPLY, (byte) 0,
+                port, 0, FrameType.CONFIG_APPLY, (byte) 0,
                 RouteControlPayload.encodeApply("127.0.0.1", port));
     }
 
@@ -191,6 +191,41 @@ class ClientTunnelSessionTest {
         assertEquals(0, s.streams().size());
         assertEquals(0, s.registry().size());
         assertFalse(s.isAuthenticated());
+    }
+
+    @Test
+    void outboundControlFramesUseInstanceSessionId() {
+        FakeTunnelBridge b = buildBridge();
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null, new FakeListenerController());
+        s.handleInbound(configApply(25580));
+        assertEquals(FrameType.CONFIG_ACK, b.sentFrames().get(0).type());
+        assertEquals(25580, b.sentFrames().get(0).sessionId());
+    }
+
+    @Test
+    void openPingAndResetUseInstanceSessionId() {
+        FakeTunnelBridge b = buildBridge();
+        FakeFactory factory = new FakeFactory();
+        ClientTunnelSession s = buildSession(b, factory, new FakeListenerController());
+        s.setPingIntervalMillis(100);
+        s.handleInbound(configApply(25580));
+        b.clearSent();
+        s.openLocalStream();
+        s.tick(200L);
+        s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
+                25580, 99, FrameType.DATA, (byte) 0, "hi".getBytes()));
+        assertTrue(b.sentFrames().stream().allMatch(f -> f.sessionId() == 25580));
+    }
+
+    @Test
+    void mismatchedInboundSessionIdIsRejected() {
+        FakeTunnelBridge b = buildBridge();
+        ClientTunnelSession s = buildSession(b, (sess, id, mode) -> null, new FakeListenerController());
+        ProtocolException ex = assertThrows(ProtocolException.class,
+                () -> s.handleInbound(Frame.createTrusted(ClientTunnelSession.PROTOCOL_VERSION,
+                        25581, 0, FrameType.CONFIG_APPLY, (byte) 0,
+                        RouteControlPayload.encodeApply("127.0.0.1", 25581))));
+        assertTrue(ex.getMessage().contains("unexpected session id"));
     }
 
     private static final class FakeListenerController implements ClientListenerController {
