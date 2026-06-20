@@ -27,7 +27,7 @@ public final class ServerConfig {
 
     private final boolean enabled;
     private final String channelName;
-    private final Map<UUID, RouteConfig> routesByUuid;
+    private final Map<RouteKey, RouteConfig> routesByKey;
     private final List<RouteConfig> routesView;
     private final int maxStreamsPerPlayer;
     private final int streamBufferSize;
@@ -69,20 +69,22 @@ public final class ServerConfig {
         this.connectTimeoutSeconds = connectTimeoutSeconds;
         this.logLevel = logLevel == null ? "" : logLevel.trim();
 
-        Map<UUID, RouteConfig> map = new LinkedHashMap<>();
+        Map<RouteKey, RouteConfig> map = new LinkedHashMap<>();
         if (routes != null) {
             for (RouteConfig r : routes) {
                 if (r == null) {
                     throw new IllegalArgumentException("route entry must not be null");
                 }
-                if (map.containsKey(r.getPlayerUuid())) {
+                RouteKey key = new RouteKey(r.getPlayerUuid(), r.getListenPort());
+                if (map.containsKey(key)) {
                     throw new IllegalArgumentException(
-                            "duplicate route entry for uuid: " + r.getPlayerUuid());
+                            "duplicate route entry for uuid " + r.getPlayerUuid()
+                                    + " listen_port " + r.getListenPort());
                 }
-                map.put(r.getPlayerUuid(), r);
+                map.put(key, r);
             }
         }
-        this.routesByUuid = Collections.unmodifiableMap(map);
+        this.routesByKey = Collections.unmodifiableMap(map);
         this.routesView = Collections.unmodifiableList(new ArrayList<>(map.values()));
 
         if (applyStrictValidation && enabled) {
@@ -164,34 +166,77 @@ public final class ServerConfig {
         return logLevel;
     }
 
-    /** Returns the route configured for {@code uuid} or {@code null}. */
+    /** Returns all routes for {@code uuid}, or an empty list. */
+    public List<RouteConfig> routesFor(UUID uuid) {
+        if (uuid == null) {
+            return List.of();
+        }
+        List<RouteConfig> out = new ArrayList<>();
+        for (RouteConfig route : routesView) {
+            if (uuid.equals(route.getPlayerUuid())) {
+                out.add(route);
+            }
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    /** Returns the route for {@code (uuid, listenPort)} or {@code null}. */
+    public RouteConfig routeFor(UUID uuid, int listenPort) {
+        if (uuid == null || listenPort < 1 || listenPort > 65535) {
+            return null;
+        }
+        return routesByKey.get(new RouteKey(uuid, listenPort));
+    }
+
+    /**
+     * Returns the route for {@code uuid}, but only when there is exactly one.
+     * Returns {@code null} when the player has zero or multiple routes.
+     */
     public RouteConfig routeFor(UUID uuid) {
         if (uuid == null) {
             return null;
         }
-        return routesByUuid.get(uuid);
+        List<RouteConfig> routes = routesFor(uuid);
+        return routes.size() == 1 ? routes.get(0) : null;
     }
 
-    /** Build a config copy with one route replaced or added. */
+    /** Build a config copy with one route replaced or added by key. */
     public ServerConfig withRoute(RouteConfig route) {
         if (route == null) {
             throw new IllegalArgumentException("route must not be null");
         }
-        Map<UUID, RouteConfig> next = new LinkedHashMap<>(routesByUuid);
-        next.put(route.getPlayerUuid(), route);
+        Map<RouteKey, RouteConfig> next = new LinkedHashMap<>(routesByKey);
+        next.put(new RouteKey(route.getPlayerUuid(), route.getListenPort()), route);
         return new ServerConfig(enabled, channelName, new ArrayList<>(next.values()),
                 maxStreamsPerPlayer, streamBufferSize,
                 globalBufferSizePerPlayer, idleTimeoutSeconds, connectTimeoutSeconds,
                 logLevel, false);
     }
 
-    /** Build a config copy without the route for {@code uuid}, if present. */
-    public ServerConfig withoutRoute(UUID uuid) {
-        if (uuid == null || !routesByUuid.containsKey(uuid)) {
+    /** Build a config copy without the route for {@code (uuid, listenPort)}. */
+    public ServerConfig withoutRoute(UUID uuid, int listenPort) {
+        if (uuid == null || listenPort < 1 || listenPort > 65535) {
             return this;
         }
-        Map<UUID, RouteConfig> next = new LinkedHashMap<>(routesByUuid);
-        next.remove(uuid);
+        RouteKey key = new RouteKey(uuid, listenPort);
+        if (!routesByKey.containsKey(key)) {
+            return this;
+        }
+        Map<RouteKey, RouteConfig> next = new LinkedHashMap<>(routesByKey);
+        next.remove(key);
+        return new ServerConfig(enabled, channelName, new ArrayList<>(next.values()),
+                maxStreamsPerPlayer, streamBufferSize,
+                globalBufferSizePerPlayer, idleTimeoutSeconds, connectTimeoutSeconds,
+                logLevel, false);
+    }
+
+    /** Build a config copy without all routes for {@code uuid}. */
+    public ServerConfig withoutRoute(UUID uuid) {
+        if (uuid == null || routesFor(uuid).isEmpty()) {
+            return this;
+        }
+        Map<RouteKey, RouteConfig> next = new LinkedHashMap<>(routesByKey);
+        next.entrySet().removeIf(e -> uuid.equals(e.getValue().getPlayerUuid()));
         return new ServerConfig(enabled, channelName, new ArrayList<>(next.values()),
                 maxStreamsPerPlayer, streamBufferSize,
                 globalBufferSizePerPlayer, idleTimeoutSeconds, connectTimeoutSeconds,
@@ -202,6 +247,19 @@ public final class ServerConfig {
         if (value <= 0) {
             throw new IllegalArgumentException(
                     field + " must be positive, got: " + value);
+        }
+    }
+
+    /** Composite identity for a route: (player_uuid, listen_port). */
+    private record RouteKey(UUID playerUuid, int listenPort) {
+        private RouteKey {
+            if (playerUuid == null) {
+                throw new IllegalArgumentException("playerUuid must not be null");
+            }
+            if (listenPort < 1 || listenPort > 65535) {
+                throw new IllegalArgumentException(
+                        "listenPort must be in 1..65535, got: " + listenPort);
+            }
         }
     }
 }

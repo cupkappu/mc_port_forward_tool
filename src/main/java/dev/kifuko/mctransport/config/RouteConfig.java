@@ -75,6 +75,16 @@ public final class RouteConfig {
         return listenPort;
     }
 
+    /** Returns {@code listenPort} — the natural session id for a route. */
+    public int routeSessionId() {
+        return listenPort;
+    }
+
+    /** True when this route shares the same (uuid, listenPort) identity. */
+    public boolean sameRouteKey(UUID uuid, int listenPort) {
+        return playerUuid.equals(uuid) && this.listenPort == listenPort;
+    }
+
     public String getTargetHost() {
         return targetHost;
     }
