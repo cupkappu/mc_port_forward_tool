@@ -115,20 +115,26 @@ public final class ClientStream {
         }
     }
 
-    private boolean reserveOrWait(int bytes) {
-        long deadline = System.currentTimeMillis() + 2_000L;
+    static long DRAIN_INTERVAL_MS = 150L;
+
+    boolean reserveOrWait(int bytes) {
+        long nextDrain = System.currentTimeMillis() + DRAIN_INTERVAL_MS;
         while (!closed.get()) {
             try {
                 budget.reserve(streamId, bytes, reservations);
                 return true;
             } catch (IllegalStateException e) {
-                if (System.currentTimeMillis() > deadline) {
-                    budget.releaseAll(streamId, reservations);
-                    deadline = System.currentTimeMillis() + 2_000L;
+                if (System.currentTimeMillis() > nextDrain) {
+                    long reserved = reservations.reservedFor(streamId);
+                    if (reserved > 0) {
+                        budget.release(streamId, (int) Math.max(reserved / 4, 1),
+                                reservations);
+                    }
+                    nextDrain = System.currentTimeMillis() + DRAIN_INTERVAL_MS;
                     continue;
                 }
                 try {
-                    Thread.sleep(10);
+                    Thread.sleep(5);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     return false;
