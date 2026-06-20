@@ -222,7 +222,7 @@ class ClientTunnelSessionTest {
     private static final class FakeFactory implements ClientStreamFactory {
         final java.util.List<ClientStream> created = new java.util.ArrayList<>();
         @Override public ClientStream create(ClientTunnelSession session, int streamId) {
-            ClientStream s = new ClientStream(session, streamId,
+            ClientStream s = new DirectClientStream(session, streamId,
                     new dev.kifuko.mctransport.buffer.BufferBudget(1024, 8192L),
                     new dev.kifuko.mctransport.buffer.ReservationState(),
                     1024);

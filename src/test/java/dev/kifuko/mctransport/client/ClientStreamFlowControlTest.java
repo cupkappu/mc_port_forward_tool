@@ -21,7 +21,7 @@ class ClientStreamFlowControlTest {
 
         BufferBudget budget = new BufferBudget(8, 8);
         ReservationState reservations = new ReservationState();
-        ClientStream stream = new ClientStream(session, 99, budget, reservations, 8);
+        ClientStream stream = new DirectClientStream(session, 99, budget, reservations, 8);
 
         // Pre-fill budget
         budget.reserve(99, 8, reservations);
@@ -41,7 +41,7 @@ class ClientStreamFlowControlTest {
 
         BufferBudget budget = new BufferBudget(1024, 4096);
         ReservationState reservations = new ReservationState();
-        ClientStream stream = new ClientStream(session, 99, budget, reservations, 1024);
+        ClientStream stream = new DirectClientStream(session, 99, budget, reservations, 1024);
 
         assertTrue(stream.reserveOrWait(4));
     }

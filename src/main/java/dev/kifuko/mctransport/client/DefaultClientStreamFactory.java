@@ -24,7 +24,7 @@ public final class DefaultClientStreamFactory implements ClientStreamFactory {
 
     @Override
     public ClientStream create(ClientTunnelSession session, int streamId) {
-        return new ClientStream(session, streamId, budget, reservations, maxPayloadSize);
+        return new DirectClientStream(session, streamId, budget, reservations, maxPayloadSize);
     }
 
     public BufferBudget budget() {
